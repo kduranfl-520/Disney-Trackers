@@ -70,6 +70,10 @@ select{padding:11px 12px;border-radius:11px;border:1px solid var(--line);backgro
 .chip{white-space:nowrap;padding:7px 13px;border-radius:20px;border:1px solid var(--line);
   background:var(--bg2);color:var(--mut);font-size:13px;font-weight:600;cursor:pointer}
 .chip.on{background:var(--gold);color:#0c1322;border-color:var(--gold)}
+.actpill{flex:none;white-space:nowrap;padding:7px 10px;border-radius:20px;border:1px solid var(--line);
+  background:var(--bg2);color:var(--mut);font-size:12.5px;font-weight:600;cursor:pointer;outline:none;
+  -webkit-appearance:none;appearance:none;text-align:center}
+.actpill.on{background:var(--teal);color:#0c1322;border-color:var(--teal)}
 
 /* list */
 .group-h{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);
@@ -366,7 +370,7 @@ const KEY='mkt_data_v3';
 const UIKEY='mkt_ui_v3';
 let DB = load();
 let game='magic_kingdoms';
-let view='characters', cat='', q='', chip='all';
+let view='characters', cat='', q='', chip='all', actChip='';
 const collapsed={};  // collapsed[game][section] = {cat:true}
 let schedLocations=['Wandering the Valley',"Scrooge's Store",'Restaurants'];
 let compLocations=['Wandering the Valley',"Scrooge's Store",'Restaurants'];
@@ -377,6 +381,7 @@ if(_ui){
   view = _ui.view || GAMES[game].sections[0][0];
   q = _ui.q||'';
   chip = _ui.chip||'all';
+  actChip = _ui.actChip||'';
   if(_ui.cat) window._cat = _ui.cat;
   if(_ui.collapsed) Object.assign(collapsed, _ui.collapsed);
   if(Array.isArray(_ui.schedLocations) && _ui.schedLocations.length) schedLocations=_ui.schedLocations;
@@ -439,7 +444,7 @@ function load(){
 function save(){ try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){} }
 function loadUI(){ try{const s=localStorage.getItem(UIKEY); return s?JSON.parse(s):null;}catch(e){return null;} }
 function saveUI(){ try{localStorage.setItem(UIKEY,JSON.stringify(
-  {game,view,q,chip,cat:window._cat||'',collapsed,schedLocations,compLocations,extraLocations}));}catch(e){} }
+  {game,view,q,chip,actChip,cat:window._cat||'',collapsed,schedLocations,compLocations,extraLocations}));}catch(e){} }
 function items(){ return DB[game][view]; }
 function colMap(){ collapsed[game]=collapsed[game]||{}; collapsed[game][view]=collapsed[game][view]||{}; return collapsed[game][view]; }
 
@@ -512,6 +517,7 @@ function render(){
     if(chip==='owned' && !x.owned) return false;
     if(chip==='missing' && x.owned) return false;
     if(chip==='leveling' && st!=='Leveling') return false;
+    if(actChip && game==='dreamlight' && view==='characters' && (x.role||'')!==actChip) return false;
     return true;
   });
 
@@ -666,8 +672,19 @@ function drawChips(){
   const base=[['all','All'],['fav','★ Favorites'],['owned','Owned'],['missing','Missing']];
   if(hasLevels()) base.push(['leveling','In progress']);
   if(!base.some(c=>c[0]===chip)) chip='all';
-  chips.innerHTML=base.map(([k,l])=>`<button class="chip ${chip===k?'on':''}" data-c="${k}">${l}</button>`).join('');
-  document.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{chip=b.dataset.c;saveUI();render();drawChips();});
+  let html=base.map(([k,l])=>`<button class="chip ${chip===k?'on':''}" data-c="${k}">${l}</button>`).join('');
+  const showAct = (game==='dreamlight' && view==='characters');
+  if(showAct){
+    const opts=[['','Activity ▾'],...ROLES.map(r=>[r,r])];
+    if(!opts.some(o=>o[0]===actChip)) actChip='';
+    html+=`<select class="actpill ${actChip?'on':''}" id="actpill">`
+      + opts.map(([k,l])=>`<option value="${esc(k)}" ${actChip===k?'selected':''}>${esc(l)}</option>`).join('')
+      + `</select>`;
+  } else { actChip=''; }
+  chips.innerHTML=html;
+  chips.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{chip=b.dataset.c;saveUI();render();drawChips();});
+  const ap=document.getElementById('actpill');
+  if(ap) ap.onchange=()=>{ actChip=ap.value; saveUI(); render(); drawChips(); };
 }
 
 /* ---------- game switcher + tabs ---------- */
@@ -741,7 +758,7 @@ document.getElementById('save').onclick=()=>{
 };
 
 /* ---------- character detail editor (DDV) ---------- */
-const ROLES=['Gardening','Fishing','Mining','Digging','Foraging','Timebending'];
+const ROLES=['Gardening','Fishing','Mining','Digging','Foraging','Timebending','Snippet Catching'];
 const DAYS=[['MO','Mon'],['TU','Tue'],['WE','Wed'],['TH','Thu'],['FR','Fri'],['SA','Sat'],['SU','Sun']];
 const BIOMES=['The Plaza','Peaceful Meadow','Dazzle Beach','Forest of Valor','Glade of Trust','Sunlit Plateau','Frosted Heights','Forgotten Lands','Eternity Isle','Storybook Vale','Wishblossom Mountains'];
 const dscrim=document.getElementById('dscrim'), dsheet=document.getElementById('dsheet');
@@ -794,7 +811,7 @@ function openDetail(id){
 
   dscrim.classList.add('on'); dsheet.classList.add('on');
 }
-function closeDetail(){ dscrim.classList.remove('on'); dsheet.classList.remove('on'); _editItem=null; render(); }
+function closeDetail(){ dsheet.style.transition=''; dsheet.style.transform=''; dscrim.classList.remove('on'); dsheet.classList.remove('on'); _editItem=null; render(); }
 
 /* ---- character role + schedule ---- */
 function drawRoles(){
@@ -1006,6 +1023,34 @@ document.getElementById('locAdd').onclick=()=>{
 
 document.getElementById('dClose').onclick=closeDetail;
 dscrim.onclick=closeDetail;
+
+/* swipe-down to close the detail sheet */
+(function(){
+  let startY=0, curY=0, dragging=false;
+  const sheet=dsheet;
+  function atTop(){ return sheet.scrollTop<=0; }
+  sheet.addEventListener('touchstart',e=>{
+    if(e.touches.length!==1) return;
+    startY=e.touches[0].clientY; curY=startY; dragging=atTop();
+  },{passive:true});
+  sheet.addEventListener('touchmove',e=>{
+    if(!dragging) return;
+    curY=e.touches[0].clientY;
+    const dy=curY-startY;
+    if(dy>0){
+      sheet.style.transition='none';
+      sheet.style.transform=`translateY(${dy}px)`;
+    }
+  },{passive:true});
+  sheet.addEventListener('touchend',()=>{
+    if(!dragging) return;
+    dragging=false;
+    const dy=curY-startY;
+    sheet.style.transition='';
+    sheet.style.transform='';
+    if(dy>110){ closeDetail(); }
+  });
+})();
 
 /* data tools */
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('on');
