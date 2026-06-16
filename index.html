@@ -119,6 +119,12 @@ select{padding:11px 12px;border-radius:11px;border:1px solid var(--line);backgro
 .del svg{width:13px;height:13px;stroke:var(--dim);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .del.armed{background:#7a2230;border-color:#b43a4a}
 .del.armed svg{stroke:#ffd9de}
+.star{flex:none;width:27px;height:27px;margin-left:5px;border-radius:8px;border:1px solid var(--line);
+  background:var(--bg2);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.star svg{width:15px;height:15px;fill:none;stroke:var(--dim);stroke-width:1.6;stroke-linejoin:round}
+.star.on{background:rgba(240,169,78,.16);border-color:var(--amber)}
+.star.on svg{fill:var(--amber);stroke:var(--amber)}
+.row.fav{border-color:rgba(240,169,78,.5)}
 .empty{text-align:center;color:var(--dim);padding:60px 20px;font-size:15px}
 
 /* fab + sheet */
@@ -145,11 +151,28 @@ select{padding:11px 12px;border-radius:11px;border:1px solid var(--line);backgro
 .rolewrap button{background:var(--card);border:1px solid var(--line);color:var(--mut);
   font-size:13px;font-weight:600;padding:8px 12px;border-radius:18px;cursor:pointer}
 .rolewrap button.on{background:var(--gold);color:#0c1322;border-color:var(--gold)}
+#compFood{width:100%;padding:11px;border-radius:11px;border:1px solid var(--line);
+  background:var(--card);color:var(--ink);font-size:15px;outline:none}
+#compLoc,#locName{flex:1;min-width:0}
+.dayrow{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+.daytog{flex:none;width:46px;background:var(--card);border:1px solid var(--line);color:var(--mut);
+  font-size:12px;font-weight:700;padding:7px 0;border-radius:9px;cursor:pointer}
+.daytog.on{background:var(--gold);color:#0c1322;border-color:var(--gold)}
+.allbtn{flex:none;background:var(--card);border:1px solid var(--line);color:var(--mut);
+  font-size:11.5px;font-weight:600;padding:7px 9px;border-radius:9px;cursor:pointer}
+.allbtn.on{background:var(--teal);color:#0c1322;border-color:var(--teal)}
+.allbtn:disabled{opacity:.35}
+.rangewrap{display:flex;align-items:center;gap:4px;flex:1;min-width:0}
+.rangewrap.dim{opacity:.3}
+.hsel{flex:1;min-width:0;padding:7px 4px;border-radius:8px;border:1px solid var(--line);
+  background:var(--card);color:var(--ink);font-size:12.5px;outline:none}
+.dash{color:var(--dim);font-size:13px}
 .schedadd{display:flex;gap:6px;margin-top:9px;align-items:stretch}
 .schedadd input{flex:1;min-width:0;padding:11px;border-radius:11px;border:1px solid var(--line);
   background:var(--card);color:var(--ink);font-size:15px;outline:none}
 .schedadd select{padding:11px;border-radius:11px;border:1px solid var(--line);background:var(--card);
   color:var(--ink);font-size:14px;outline:none}
+#schedLoc{flex:1;min-width:0}
 .schedbtn{flex:none;padding:0 16px}
 .schedrow{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);
   border-radius:11px;padding:9px 12px;margin-bottom:6px}
@@ -270,7 +293,7 @@ select{padding:11px 12px;border-radius:11px;border:1px solid var(--line);backgro
         <option value="18">6 PM</option><option value="19">7 PM</option><option value="20">8 PM</option>
         <option value="21">9 PM</option><option value="22">10 PM</option><option value="23">11 PM</option>
       </select>
-      <input id="schedLoc" type="text" placeholder="Location (e.g. Plaza)" autocomplete="off">
+      <select id="schedLoc"></select>
       <button class="btn p schedbtn" id="schedAdd">Add</button>
     </div>
   </div>
@@ -279,9 +302,21 @@ select{padding:11px 12px;border-radius:11px;border:1px solid var(--line);backgro
   <div class="field dgroup" id="g_complevel"><label>Level</label>
     <div class="rolewrap" id="compLevelWrap"></div></div>
 
-  <!-- Companion: days available -->
-  <div class="field dgroup" id="g_days"><label>Days available</label>
-    <div class="rolewrap" id="daysWrap"></div></div>
+  <!-- Companion: favorite food -->
+  <div class="field dgroup" id="g_food"><label>Favorite food</label>
+    <input id="compFood" type="text" placeholder="e.g. Wild Mushroom" autocomplete="off"></div>
+
+  <!-- Companion: location -->
+  <div class="field dgroup" id="g_comploc"><label>Location</label>
+    <div id="compLocList"></div>
+    <div class="schedadd">
+      <select id="compLoc"></select>
+      <button class="btn p schedbtn" id="compLocAdd">Add</button>
+    </div></div>
+
+  <!-- Companion: per-day availability -->
+  <div class="field dgroup" id="g_days"><label>Availability by day</label>
+    <div id="daysWrap"></div></div>
 
   <!-- Recipe: ingredients -->
   <div class="field dgroup" id="g_ingr">
@@ -299,7 +334,7 @@ select{padding:11px 12px;border-radius:11px;border:1px solid var(--line);backgro
     <label>Where to find</label>
     <div id="locList"></div>
     <div class="schedadd">
-      <input id="locName" type="text" placeholder="Location / source" autocomplete="off">
+      <select id="locName"></select>
       <button class="btn p schedbtn" id="locAdd">Add</button>
     </div>
   </div>
@@ -333,6 +368,9 @@ let DB = load();
 let game='magic_kingdoms';
 let view='characters', cat='', q='', chip='all';
 const collapsed={};  // collapsed[game][section] = {cat:true}
+let schedLocations=['Wandering the Valley',"Scrooge's Store",'Restaurants'];
+let compLocations=['Wandering the Valley',"Scrooge's Store",'Restaurants'];
+let extraLocations=[];  // custom locations the user adds to the biome dropdowns
 let _ui = loadUI();
 if(_ui){
   game = (_ui.game && GAMES[_ui.game]) ? _ui.game : 'magic_kingdoms';
@@ -341,6 +379,9 @@ if(_ui){
   chip = _ui.chip||'all';
   if(_ui.cat) window._cat = _ui.cat;
   if(_ui.collapsed) Object.assign(collapsed, _ui.collapsed);
+  if(Array.isArray(_ui.schedLocations) && _ui.schedLocations.length) schedLocations=_ui.schedLocations;
+  if(Array.isArray(_ui.compLocations) && _ui.compLocations.length) compLocations=_ui.compLocations;
+  if(Array.isArray(_ui.extraLocations)) extraLocations=_ui.extraLocations;
 }
 function freshDB(){
   const d={};
@@ -398,7 +439,7 @@ function load(){
 function save(){ try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){} }
 function loadUI(){ try{const s=localStorage.getItem(UIKEY); return s?JSON.parse(s):null;}catch(e){return null;} }
 function saveUI(){ try{localStorage.setItem(UIKEY,JSON.stringify(
-  {game,view,q,chip,cat:window._cat||'',collapsed}));}catch(e){} }
+  {game,view,q,chip,cat:window._cat||'',collapsed,schedLocations,compLocations,extraLocations}));}catch(e){} }
 function items(){ return DB[game][view]; }
 function colMap(){ collapsed[game]=collapsed[game]||{}; collapsed[game][view]=collapsed[game][view]||{}; return collapsed[game][view]; }
 
@@ -467,6 +508,7 @@ function render(){
     if(window._cat && x.category!==window._cat) return false;
     if(q && !x.name.toLowerCase().includes(q)) return false;
     const st=statusOf(x);
+    if(chip==='fav' && !x.fav) return false;
     if(chip==='owned' && !x.owned) return false;
     if(chip==='missing' && x.owned) return false;
     if(chip==='leveling' && st!=='Leveling') return false;
@@ -513,8 +555,12 @@ function render(){
         sub = `Friendship ${fl}${role}${sched}`;
       } else if(isComp){
         const cl = it.compLevel? 'Lv '+it.compLevel : 'Collected';
-        const dn = (it.days&&it.days.length)? ' · '+it.days.length+'d' : '';
-        sub = cl+dn;
+        const nDays = it.dayTimes? Object.keys(it.dayTimes).length : (it.days?it.days.length:0);
+        const dn = nDays? ' · '+nDays+'d' : '';
+        const food = it.food? ' · 🍎 '+it.food : '';
+        const nLoc = Array.isArray(it.locs)? it.locs.length : (it.loc?1:0);
+        const loc = nLoc? ' · 📍'+nLoc : '';
+        sub = cl+dn+food+loc;
       } else if(isRecipe){
         const n=(it.ingredients&&it.ingredients.length)||0;
         sub = n? n+' ingredient'+(n>1?'s':'') : 'Collected';
@@ -548,10 +594,12 @@ function render(){
       const rowCls = it.level==='MAX'?'maxed':(it.owned?(lv?'leveling':'maxed'):'');
       const editable = ddv;  // every DDV card is tappable to edit
       const infoTap = editable ? `data-edit="${esc(id)}"` : '';
-      html+=`<div class="row ${it.owned?'':'off'} ${rowCls}">
+      html+=`<div class="row ${it.owned?'':'off'} ${rowCls} ${it.fav?'fav':''}">
         <div class="check ${it.owned?'on':''}" data-id="${esc(id)}">
           <svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>
         <div class="info" ${infoTap}><div class="nm">${esc(it.name)}${editable?' <span class="editdot">✎</span>':''}</div><div class="sub">${esc(sub)}</div></div>
+        <button class="star ${it.fav?'on':''}" data-fav="${esc(id)}" aria-label="Favorite">
+          <svg viewBox="0 0 24 24"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 21.4 6.1 24.5l1.2-6.5L2.5 9.4l6.6-.9z"/></svg></button>
         ${ctrl}
         <button class="del" data-del="${esc(id)}" aria-label="Delete">
           <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></button>
@@ -562,6 +610,7 @@ function render(){
   document.querySelectorAll('.check').forEach(c=>c.onclick=()=>toggle(c.dataset.id));
   document.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>levelAct(b.dataset.act,b.dataset.id));
   document.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>delItem(b,b.dataset.del));
+  document.querySelectorAll('[data-fav]').forEach(b=>b.onclick=()=>favToggle(b.dataset.fav));
   document.querySelectorAll('[data-edit]').forEach(el=>el.onclick=()=>openDetail(el.dataset.edit));
   document.querySelectorAll('[data-grp]').forEach(h=>h.onclick=()=>{
     const g=h.dataset.grp; const m=colMap(); m[g]=!m[g]; saveUI(); render();
@@ -576,6 +625,12 @@ function toggle(id){
   it.owned=!it.owned;
   if(it.owned && hasLevels() && !it.level) setLevel(it,0);
   recompute(it); save(); render();
+}
+function favToggle(id){
+  const [nm,c]=id.split('|');
+  const it=items().find(x=>x.name===nm && x.category===c);
+  if(!it) return;
+  it.fav=!it.fav; save(); render();
 }
 
 function levelAct(act,id){
@@ -608,7 +663,7 @@ function delItem(btn,id){
 
 /* ---------- chips ---------- */
 function drawChips(){
-  const base=[['all','All'],['owned','Owned'],['missing','Missing']];
+  const base=[['all','All'],['fav','★ Favorites'],['owned','Owned'],['missing','Missing']];
   if(hasLevels()) base.push(['leveling','In progress']);
   if(!base.some(c=>c[0]===chip)) chip='all';
   chips.innerHTML=base.map(([k,l])=>`<button class="chip ${chip===k?'on':''}" data-c="${k}">${l}</button>`).join('');
@@ -688,6 +743,7 @@ document.getElementById('save').onclick=()=>{
 /* ---------- character detail editor (DDV) ---------- */
 const ROLES=['Gardening','Fishing','Mining','Digging','Foraging','Timebending'];
 const DAYS=[['MO','Mon'],['TU','Tue'],['WE','Wed'],['TH','Thu'],['FR','Fri'],['SA','Sat'],['SU','Sun']];
+const BIOMES=['The Plaza','Peaceful Meadow','Dazzle Beach','Forest of Valor','Glade of Trust','Sunlit Plateau','Frosted Heights','Forgotten Lands','Eternity Isle','Storybook Vale','Wishblossom Mountains'];
 const dscrim=document.getElementById('dscrim'), dsheet=document.getElementById('dsheet');
 let _editItem=null;
 function showGroup(id,on){ document.getElementById(id).classList.toggle('hide',!on); }
@@ -707,18 +763,32 @@ function openDetail(id){
   showGroup('g_role', isChar);
   showGroup('g_sched', isChar);
   showGroup('g_complevel', isComp);
+  showGroup('g_food', isComp);
+  showGroup('g_comploc', isComp);
   showGroup('g_days', isComp);
   showGroup('g_ingr', isRecipe);
   showGroup('g_loc', isOtherCol);
 
   // ensure fields exist
   if(isChar && !it.schedule) it.schedule=[];
-  if(isComp){ if(it.compLevel===undefined) it.compLevel=''; if(!it.days) it.days=[]; }
+  if(isComp){
+    if(it.compLevel===undefined) it.compLevel='';
+    if(it.food===undefined) it.food='';
+    if(!Array.isArray(it.locs)){
+      it.locs = (it.loc && typeof it.loc==='string') ? [it.loc] : [];  // migrate old single string
+      delete it.loc;
+    }
+    if(!it.dayTimes){
+      it.dayTimes={};
+      // migrate old simple "days" array -> all-day entries
+      if(Array.isArray(it.days)) it.days.forEach(d=>{ it.dayTimes[d]={all:true}; });
+    }
+  }
   if(isRecipe && !it.ingredients) it.ingredients=[];
   if(isOtherCol && !it.locations) it.locations=[];
 
-  if(isChar){ drawRoles(); drawSched(); }
-  if(isComp){ drawCompLevel(); drawDays(); }
+  if(isChar){ drawRoles(); fillSchedLoc(); drawSched(); }
+  if(isComp){ drawCompLevel(); drawFood(); fillCompLoc(); drawDays(); }
   if(isRecipe){ drawIngr(); }
   if(isOtherCol){ drawLoc(); }
 
@@ -757,13 +827,32 @@ function drawSched(){
     });
   }
 }
+function fillSchedLoc(sel){
+  const el=document.getElementById('schedLoc');
+  const cur = sel!==undefined ? sel : el.value;
+  el.innerHTML = `<option value="">Location…</option>`
+    + schedLocations.map(l=>`<option value="${esc(l)}">${esc(l)}</option>`).join('')
+    + `<option value="__add">+ Add new location…</option>`;
+  if(cur && schedLocations.includes(cur)) el.value=cur;
+}
+document.getElementById('schedLoc').onchange=function(){
+  if(this.value==='__add'){
+    const name=(prompt('New location name:')||'').trim();
+    if(name){
+      if(!schedLocations.includes(name)){ schedLocations.push(name); saveUI(); }
+      fillSchedLoc(name);
+    } else {
+      fillSchedLoc('');
+    }
+  }
+};
 document.getElementById('schedAdd').onclick=()=>{
   const loc=document.getElementById('schedLoc').value.trim();
   let time=document.getElementById('schedTime').value;
   if(time && /^\d{2}$/.test(time)) time=time+':00';   // hour dropdown -> HH:00
-  if(!loc){ toast('Enter a location'); return; }
+  if(!loc || loc==='__add'){ toast('Pick a location'); return; }
   _editItem.schedule.push({loc,time}); save();
-  document.getElementById('schedLoc').value=''; document.getElementById('schedTime').value='';
+  fillSchedLoc(''); document.getElementById('schedTime').value='';
   drawSched();
 };
 
@@ -779,17 +868,89 @@ function drawCompLevel(){
     _editItem.compLevel=b.dataset.cl; save(); drawCompLevel();
   });
 }
+function drawFood(){
+  const el=document.getElementById('compFood');
+  el.value=_editItem.food||'';
+  el.oninput=()=>{ _editItem.food=el.value; save(); };
+}
+function biomeOptions(exclude){
+  const ex=new Set(exclude||[]);
+  const all=BIOMES.concat(extraLocations.filter(x=>!BIOMES.includes(x)));
+  return `<option value="">Location…</option>`
+    + all.filter(b=>!ex.has(b)).map(b=>`<option value="${esc(b)}">${esc(b)}</option>`).join('')
+    + `<option value="__add">+ Add new location…</option>`;
+}
+function addCustomLocation(){
+  const name=(prompt('New location name:')||'').trim();
+  if(!name) return '';
+  if(!BIOMES.includes(name) && !extraLocations.includes(name)){ extraLocations.push(name); saveUI(); }
+  return name;
+}
+function fillCompLoc(){
+  _editItem.locs = Array.isArray(_editItem.locs)?_editItem.locs:[];
+  const sel=document.getElementById('compLoc');
+  sel.innerHTML=biomeOptions(_editItem.locs);
+  // list of chosen locations
+  const l=document.getElementById('compLocList');
+  if(!_editItem.locs.length){ l.innerHTML=`<div class="schedempty">No locations yet. Pick one below.</div>`; }
+  else{
+    l.innerHTML=_editItem.locs.map((loc,i)=>`<div class="schedrow">
+      <span class="sloc">${esc(loc)}</span>
+      <button class="srm" data-i="${i}">×</button></div>`).join('');
+    l.querySelectorAll('.srm').forEach(b=>b.onclick=()=>{
+      _editItem.locs.splice(+b.dataset.i,1); save(); fillCompLoc();
+    });
+  }
+}
+document.getElementById('compLocAdd').onclick=()=>{
+  let v=document.getElementById('compLoc').value;
+  if(v==='__add'){ v=addCustomLocation(); if(!v){ fillCompLoc(); return; } }
+  if(!v){ toast('Pick a location'); return; }
+  _editItem.locs=Array.isArray(_editItem.locs)?_editItem.locs:[];
+  if(!_editItem.locs.includes(v)) _editItem.locs.push(v);
+  save(); fillCompLoc();
+};
+const HOURS=Array.from({length:24},(_,h)=>{const ap=h<12?'AM':'PM';let hr=h%12;if(hr===0)hr=12;return [String(h).padStart(2,'0'), hr+' '+ap];});
+function hourOpts(selected){
+  return HOURS.map(([v,l])=>`<option value="${v}" ${v===selected?'selected':''}>${l}</option>`).join('');
+}
 function drawDays(){
   const w=document.getElementById('daysWrap');
-  const set=new Set(_editItem.days||[]);
+  const dt=_editItem.dayTimes||(_editItem.dayTimes={});
   w.innerHTML=DAYS.map(([code,lab])=>{
-    const on=set.has(code)?'on':'';
-    return `<button type="button" class="${on}" data-day="${code}">${lab}</button>`;
+    const e=dt[code];
+    const on = !!e;
+    const allday = on && e.all;
+    const from = (on && !e.all && e.from)? e.from : '08';
+    const to   = (on && !e.all && e.to)? e.to : '17';
+    return `<div class="dayrow">
+      <button type="button" class="daytog ${on?'on':''}" data-dtog="${code}">${lab}</button>
+      <button type="button" class="allbtn ${allday?'on':''}" data-dall="${code}" ${on?'':'disabled'}>All day</button>
+      <span class="rangewrap ${(!on||allday)?'dim':''}">
+        <select class="hsel" data-dfrom="${code}" ${(!on||allday)?'disabled':''}>${hourOpts(from)}</select>
+        <span class="dash">–</span>
+        <select class="hsel" data-dto="${code}" ${(!on||allday)?'disabled':''}>${hourOpts(to)}</select>
+      </span>
+    </div>`;
   }).join('');
-  w.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{
-    const d=b.dataset.day; const arr=_editItem.days||(_editItem.days=[]);
-    const i=arr.indexOf(d); if(i>=0) arr.splice(i,1); else arr.push(d);
+  // day on/off
+  w.querySelectorAll('[data-dtog]').forEach(b=>b.onclick=()=>{
+    const d=b.dataset.dtog;
+    if(dt[d]) delete dt[d]; else dt[d]={all:true};
     save(); drawDays();
+  });
+  // all-day toggle
+  w.querySelectorAll('[data-dall]').forEach(b=>b.onclick=()=>{
+    const d=b.dataset.dall; if(!dt[d]) return;
+    if(dt[d].all){ dt[d]={from:'08',to:'17'}; } else { dt[d]={all:true}; }
+    save(); drawDays();
+  });
+  // range selects
+  w.querySelectorAll('[data-dfrom]').forEach(s=>s.onchange=()=>{
+    const d=s.dataset.dfrom; if(!dt[d]||dt[d].all) return; dt[d].from=s.value; save();
+  });
+  w.querySelectorAll('[data-dto]').forEach(s=>s.onchange=()=>{
+    const d=s.dataset.dto; if(!dt[d]||dt[d].all) return; dt[d].to=s.value; save();
   });
 }
 
@@ -819,9 +980,11 @@ document.getElementById('ingrAdd').onclick=()=>{
 
 /* ---- collectible locations ---- */
 function drawLoc(){
+  const s=_editItem.locations||(_editItem.locations=[]);
+  const sel=document.getElementById('locName');
+  sel.innerHTML=biomeOptions(s);
   const l=document.getElementById('locList');
-  const s=_editItem.locations||[];
-  if(!s.length){ l.innerHTML=`<div class="schedempty">No locations yet. Add where to find this below.</div>`; }
+  if(!s.length){ l.innerHTML=`<div class="schedempty">No locations yet. Pick where to find this below.</div>`; }
   else{
     l.innerHTML=s.map((e,i)=>`<div class="schedrow">
       <span class="sloc">${esc(e)}</span>
@@ -832,10 +995,12 @@ function drawLoc(){
   }
 }
 document.getElementById('locAdd').onclick=()=>{
-  const v=document.getElementById('locName').value.trim();
-  if(!v){ toast('Enter a location'); return; }
-  _editItem.locations.push(v); save();
-  document.getElementById('locName').value='';
+  let v=document.getElementById('locName').value;
+  if(v==='__add'){ v=addCustomLocation(); if(!v){ drawLoc(); return; } }
+  if(!v){ toast('Pick a location'); return; }
+  _editItem.locations=_editItem.locations||[];
+  if(!_editItem.locations.includes(v)) _editItem.locations.push(v);
+  save();
   drawLoc();
 };
 
