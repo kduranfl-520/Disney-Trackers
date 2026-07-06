@@ -378,18 +378,18 @@ const KEY='mkt_data_v3';
 const UIKEY='mkt_ui_v3';
 let DB = load();
 let game='magic_kingdoms';
-let view='characters', cat='', q='', chip='all', actChip='';
+let view='characters', cat='', q='', chip='all', actChip='', lvlChip='';
 const collapsed={};  // collapsed[game][section] = {cat:true}
 let schedLocations=['Wandering the Valley',"Scrooge's Store",'Restaurants'];
 let compLocations=['Wandering the Valley',"Scrooge's Store",'Restaurants'];
 let extraLocations=[];  // custom locations the user adds to the biome dropdowns
 const tabState={};  // per-tab filters: tabState['game|view'] = {chip,cat,q,actChip}
 function tabKey(){ return game+'|'+view; }
-function stashTab(){ tabState[tabKey()]={chip,cat:window._cat||'',q,actChip}; }
+function stashTab(){ tabState[tabKey()]={chip,cat:window._cat||'',q,actChip,lvlChip}; }
 function restoreTab(){
   const s=tabState[tabKey()];
-  if(s){ chip=s.chip||'all'; window._cat=s.cat||''; q=s.q||''; actChip=s.actChip||''; }
-  else { chip='all'; window._cat=''; q=''; actChip=''; }
+  if(s){ chip=s.chip||'all'; window._cat=s.cat||''; q=s.q||''; actChip=s.actChip||''; lvlChip=s.lvlChip||''; }
+  else { chip='all'; window._cat=''; q=''; actChip=''; lvlChip=''; }
   const qb=document.getElementById('q'); if(qb) qb.value=q;
 }
 let _ui = loadUI();
@@ -461,7 +461,7 @@ function load(){
 }
 function save(){ try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){} }
 function loadUI(){ try{const s=localStorage.getItem(UIKEY); return s?JSON.parse(s):null;}catch(e){return null;} }
-function saveUI(){ try{ tabState[tabKey()]={chip,cat:window._cat||'',q,actChip};
+function saveUI(){ try{ tabState[tabKey()]={chip,cat:window._cat||'',q,actChip,lvlChip};
   localStorage.setItem(UIKEY,JSON.stringify(
   {game,view,q,chip,actChip,cat:window._cat||'',collapsed,schedLocations,compLocations,extraLocations,tabState}));}catch(e){} }
 function items(){ return DB[game][view]; }
@@ -537,6 +537,11 @@ function render(){
     if(chip==='missing' && x.owned) return false;
     if(chip==='leveling' && st!=='Leveling') return false;
     if(actChip && game==='dreamlight' && view==='characters' && (x.role||'')!==actChip) return false;
+    if(lvlChip && hasLevels()){
+      if(!x.owned) return false;
+      if(lvlChip==='MAX'){ if(x.level!=='MAX') return false; }
+      else { if(x.level==='MAX' || String(curNum(x))!==lvlChip) return false; }
+    }
     return true;
   });
 
@@ -700,10 +705,23 @@ function drawChips(){
       + opts.map(([k,l])=>`<option value="${esc(k)}" ${actChip===k?'selected':''}>${esc(l)}</option>`).join('')
       + `</select>`;
   } else { actChip=''; }
+  if(hasLevels()){
+    const lad=ladder();
+    // numeric levels 0..maxLevel-1 map to '0'..; also a Maxed option
+    const lvlOpts=[['','Level ▾']];
+    lad.forEach((_,i)=>{ lvlOpts.push([String(i), 'Level '+i]); });
+    lvlOpts.push(['MAX','Maxed']);
+    if(!lvlOpts.some(o=>o[0]===lvlChip)) lvlChip='';
+    html+=`<select class="actpill lvlpill ${lvlChip?'on':''}" id="lvlpill">`
+      + lvlOpts.map(([k,l])=>`<option value="${esc(k)}" ${lvlChip===k?'selected':''}>${esc(l)}</option>`).join('')
+      + `</select>`;
+  } else { lvlChip=''; }
   chips.innerHTML=html;
   chips.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{chip=b.dataset.c;saveUI();render();drawChips();});
   const ap=document.getElementById('actpill');
   if(ap) ap.onchange=()=>{ actChip=ap.value; saveUI(); render(); drawChips(); };
+  const lp=document.getElementById('lvlpill');
+  if(lp) lp.onchange=()=>{ lvlChip=lp.value; saveUI(); render(); drawChips(); };
 }
 
 /* ---------- game switcher + tabs ---------- */
