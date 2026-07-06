@@ -693,10 +693,28 @@ function delItem(btn,id){
 
 /* ---------- chips ---------- */
 function drawChips(){
-  const base=[['all','All'],['fav','★ Favorites'],['owned','Owned'],['missing','Missing']];
-  if(hasLevels()) base.push(['leveling','In progress']);
-  if(!base.some(c=>c[0]===chip)) chip='all';
-  let html=base.map(([k,l])=>`<button class="chip ${chip===k?'on':''}" data-c="${k}">${l}</button>`).join('');
+  const chip_html=(k,l)=>`<button class="chip ${chip===k?'on':''}" data-c="${k}">${l}</button>`;
+  // build the level pill (if this tab has levels)
+  let lvlHtml='';
+  if(hasLevels()){
+    const lad=ladder();
+    const lvlOpts=[['','Level ▾']];
+    lad.forEach((_,i)=>{ lvlOpts.push([String(i), 'Level '+i]); });
+    lvlOpts.push(['MAX','Maxed']);
+    if(!lvlOpts.some(o=>o[0]===lvlChip)) lvlChip='';
+    lvlHtml=`<select class="actpill lvlpill ${lvlChip?'on':''}" id="lvlpill">`
+      + lvlOpts.map(([k,l])=>`<option value="${esc(k)}" ${lvlChip===k?'selected':''}>${esc(l)}</option>`).join('')
+      + `</select>`;
+  } else { lvlChip=''; }
+  // validity: ensure chip is a real option
+  const validChips=['all','fav','owned','missing'].concat(hasLevels()?['leveling']:[]);
+  if(!validChips.includes(chip)) chip='all';
+  // assemble in requested order: All, Favorites, Owned, [Level pill], In progress, Missing
+  let html = chip_html('all','All') + chip_html('fav','★ Favorites') + chip_html('owned','Owned');
+  html += lvlHtml;
+  if(hasLevels()) html += chip_html('leveling','In progress');
+  html += chip_html('missing','Missing');
+  // activity pill (DDV characters only) goes after
   const showAct = (game==='dreamlight' && view==='characters');
   if(showAct){
     const opts=[['','Activity ▾'],...ROLES.map(r=>[r,r])];
@@ -705,17 +723,6 @@ function drawChips(){
       + opts.map(([k,l])=>`<option value="${esc(k)}" ${actChip===k?'selected':''}>${esc(l)}</option>`).join('')
       + `</select>`;
   } else { actChip=''; }
-  if(hasLevels()){
-    const lad=ladder();
-    // numeric levels 0..maxLevel-1 map to '0'..; also a Maxed option
-    const lvlOpts=[['','Level ▾']];
-    lad.forEach((_,i)=>{ lvlOpts.push([String(i), 'Level '+i]); });
-    lvlOpts.push(['MAX','Maxed']);
-    if(!lvlOpts.some(o=>o[0]===lvlChip)) lvlChip='';
-    html+=`<select class="actpill lvlpill ${lvlChip?'on':''}" id="lvlpill">`
-      + lvlOpts.map(([k,l])=>`<option value="${esc(k)}" ${lvlChip===k?'selected':''}>${esc(l)}</option>`).join('')
-      + `</select>`;
-  } else { lvlChip=''; }
   chips.innerHTML=html;
   chips.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{chip=b.dataset.c;saveUI();render();drawChips();});
   const ap=document.getElementById('actpill');
