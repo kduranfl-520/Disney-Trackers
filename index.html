@@ -237,7 +237,6 @@ select{padding:11px 12px;border-radius:11px;border:1px solid var(--line);backgro
       <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input id="q" placeholder="Search by name…" autocomplete="off">
     </div>
-    <select id="cat"></select>
   </div>
   <div class="chips" id="chips"></div>
   <div class="collapsebar">
@@ -522,10 +521,11 @@ function render(){
     : `<span><i class="dot max"></i>Done <b>${owned}</b></span>
        <span><i class="dot no"></i>To get <b>${tounlock}</b></span>`;
 
-  // category dropdown
+  // category options (used by the category pill in the chip row)
   const cats=[...new Set(all.map(x=>x.category))].sort();
-  cat.innerHTML=`<option value="">All categories (${cats.length})</option>`+
-    cats.map(c=>`<option ${c===window._cat?'selected':''}>${esc(c)}</option>`).join('');
+  // safety: if a saved category filter no longer exists in this tab, clear it so the user isn't stuck
+  if(window._cat && !cats.includes(window._cat)){ window._cat=''; saveUI(); }
+  window._catOpts=cats;
 
   // filtered
   let rows=all.filter(x=>{
@@ -706,13 +706,20 @@ function drawChips(){
       + lvlOpts.map(([k,l])=>`<option value="${esc(k)}" ${lvlChip===k?'selected':''}>${esc(l)}</option>`).join('')
       + `</select>`;
   } else { lvlChip=''; }
+  // build the category pill (from the current tab's categories)
+  const cats=[...new Set(items().map(x=>x.category))].sort();
+  if(window._cat && !cats.includes(window._cat)){ window._cat=''; }
+  const catHtml=`<select class="actpill catpill ${window._cat?'on':''}" id="catpill">`
+    + `<option value="">Category ▾</option>`
+    + cats.map(c=>`<option value="${esc(c)}" ${c===window._cat?'selected':''}>${esc(c)}</option>`).join('')
+    + `</select>`;
   // validity: ensure chip is a real option
-  const validChips=['all','fav','owned','missing'].concat(hasLevels()?['leveling']:[]);
+  const validChips=['all','fav','owned','missing'];
   if(!validChips.includes(chip)) chip='all';
-  // assemble in requested order: All, Favorites, Owned, [Level pill], In progress, Missing
+  // order: All, Favorites, Owned, [Level pill], [Category pill], Missing
   let html = chip_html('all','All') + chip_html('fav','★ Favorites') + chip_html('owned','Owned');
   html += lvlHtml;
-  if(hasLevels()) html += chip_html('leveling','In progress');
+  html += catHtml;
   html += chip_html('missing','Missing');
   // activity pill (DDV characters only) goes after
   const showAct = (game==='dreamlight' && view==='characters');
@@ -725,6 +732,8 @@ function drawChips(){
   } else { actChip=''; }
   chips.innerHTML=html;
   chips.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{chip=b.dataset.c;saveUI();render();drawChips();});
+  const cp=document.getElementById('catpill');
+  if(cp) cp.onchange=()=>{ window._cat=cp.value; saveUI(); render(); drawChips(); };
   const ap=document.getElementById('actpill');
   if(ap) ap.onchange=()=>{ actChip=ap.value; saveUI(); render(); drawChips(); };
   const lp=document.getElementById('lvlpill');
@@ -787,7 +796,6 @@ function attachClear(id){
 ['q','addName','addCat','compFood','ingrName'].forEach(attachClear);
 
 document.getElementById('q').oninput=e=>{q=e.target.value.toLowerCase();saveUI();render();};
-cat.onchange=e=>{window._cat=e.target.value;saveUI();render();};
 
 /* add sheet */
 const sheet=document.getElementById('sheet'), scrim=document.getElementById('scrim');
@@ -825,7 +833,7 @@ document.getElementById('save').onclick=()=>{
   const isNewCat=!items().some(x=>x.category===c);
   const it={name:nm,category:c,owned:own,level:own?'':'',timer:'',unlock:'',status:''};
   recompute(it); items().push(it); save();
-  window._cat=c; closeSheet(); render();
+  window._cat=''; closeSheet(); saveUI(); render();
   toast(isNewCat ? 'Added '+nm+' · new category "'+c+'"' : 'Added '+nm);
 };
 
