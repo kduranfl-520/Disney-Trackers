@@ -210,6 +210,8 @@ select{padding:11px 12px;border-radius:11px;border:1px solid var(--line);backgro
 /* data menu */
 .tools{display:flex;gap:8px;margin:14px 0 2px}
 .syncinfo{font-size:11.5px;color:var(--dim);margin:2px 2px 8px;text-align:center}
+.backupwarn{font-size:12.5px;line-height:1.4;background:rgba(240,169,78,.14);border:1px solid var(--amber);color:var(--amber);border-radius:12px;padding:9px 12px;margin:0 2px 10px;text-align:center}
+.backupwarn b{color:var(--amber)}
 .tool{flex:1;padding:10px;border-radius:11px;border:1px solid var(--line);background:var(--bg2);
   color:var(--mut);font-size:12.5px;font-weight:600;cursor:pointer;text-align:center}
 .toast{position:fixed;left:50%;bottom:calc(90px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);
@@ -246,10 +248,12 @@ select{padding:11px 12px;border-radius:11px;border:1px solid var(--line);backgro
 
   <div id="list"></div>
 
+  <div id="backupWarn" class="backupwarn" style="display:none"></div>
   <div class="tools">
     <button class="tool" id="sync">⟳ Sync new content</button>
     <button class="tool" id="exp">⤓ Export backup</button>
     <button class="tool" id="imp">⤒ Import backup</button>
+    <button class="tool" id="restore">↩ Restore auto-backup</button>
     <button class="tool" id="rst">↺ Reset to original</button>
   </div>
   <div id="syncinfo" class="syncinfo"></div>
@@ -521,7 +525,49 @@ function load(){
     return fresh;}}catch(e){}
   return freshDB();
 }
-function save(){ try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){} }
+function save(){ try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){} autoSnapshot(); markDirty(); }
+
+/* ---- Layer 1: rolling in-app auto-backup snapshots ---- */
+const SNAPKEY='mkt_snapshots_v1';   // array of {at, label, data}
+const DIRTYKEY='mkt_dirty_v1';      // ISO time of last change since last export
+const MAX_SNAPS=8;                  // keep this many recent snapshots
+let _snapTimer=null;
+function autoSnapshot(){
+  // debounce so a burst of edits writes at most one snapshot per ~2.5s
+  if(_snapTimer) return;
+  _snapTimer=setTimeout(()=>{
+    _snapTimer=null;
+    try{
+      const now=new Date();
+      let arr=[]; try{arr=JSON.parse(localStorage.getItem(SNAPKEY))||[];}catch(e){arr=[];}
+      // skip if identical to the newest snapshot (no real change)
+      const snapshot=JSON.stringify(DB);
+      if(arr.length && arr[arr.length-1]._h===snapshot.length && JSON.stringify(arr[arr.length-1].data)===snapshot){ return; }
+      arr.push({at:now.toISOString(), label:stamp(now), _h:snapshot.length, data:JSON.parse(snapshot)});
+      while(arr.length>MAX_SNAPS) arr.shift();
+      localStorage.setItem(SNAPKEY, JSON.stringify(arr));
+    }catch(e){/* storage full or unavailable — fail quietly */}
+  }, 2500);
+}
+function markDirty(){
+  try{
+    const exp=localStorage.getItem('mkt_last_export');
+    // dirty = there have been changes; record the time of the latest change
+    localStorage.setItem(DIRTYKEY, new Date().toISOString());
+  }catch(e){}
+}
+function hasUnsavedChanges(){
+  try{
+    const dirty=localStorage.getItem(DIRTYKEY);
+    const exp=localStorage.getItem('mkt_last_export');
+    if(!dirty) return false;
+    if(!exp) return true;                       // never exported but has changes
+    return new Date(dirty) > new Date(exp);      // changed since last export
+  }catch(e){ return false; }
+}
+function getSnapshots(){
+  try{ return JSON.parse(localStorage.getItem(SNAPKEY))||[]; }catch(e){ return []; }
+}
 function loadUI(){ try{const s=localStorage.getItem(UIKEY); return s?JSON.parse(s):null;}catch(e){return null;} }
 function saveUI(){ try{ tabState[tabKey()]={chip,cat:window._cat||'',q,actChip,lvlChip,expChip};
   localStorage.setItem(UIKEY,JSON.stringify(
@@ -1234,9 +1280,21 @@ function toast(m){const t=document.getElementById('toast');t.textContent=m;t.cla
   clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('on'),1900);}
 function pad2(n){return String(n).padStart(2,'0');}
 function drawSyncInfo(){
-  const el=document.getElementById('syncinfo'); if(!el) return;
-  let iso=null; try{iso=localStorage.getItem('mkt_last_export');}catch(e){}
-  el.textContent = iso ? 'Last backup / import: '+stamp(new Date(iso)) : 'No backup yet — tap Export to save one.';
+  const el=document.getElementById('syncinfo');
+  if(el){
+    let iso=null; try{iso=localStorage.getItem('mkt_last_export');}catch(e){}
+    el.textContent = iso ? 'Last backup / import: '+stamp(new Date(iso)) : 'No backup yet — tap Export to save one.';
+  }
+  // Layer 2: unsaved-changes reminder before an update can wipe storage
+  const w=document.getElementById('backupWarn');
+  if(w){
+    if(hasUnsavedChanges()){
+      w.style.display='';
+      w.innerHTML='⚠️ <b>You have changes since your last backup.</b> Export now before updating the app or re-adding the icon — an update clears in-app storage.';
+    } else {
+      w.style.display='none';
+    }
+  }
 }
 function stamp(d){ // human-readable local time
   d=d||new Date();
@@ -1253,11 +1311,11 @@ document.getElementById('exp').onclick=()=>{
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download=`disney-trackers-backup_${fileStamp(now)}.json`;a.click();
   try{localStorage.setItem('mkt_last_export', now.toISOString());}catch(e){}
+  try{localStorage.removeItem('mkt_dirty_v1');}catch(e){}
   drawSyncInfo();
   toast('Backup saved · '+stamp(now));
 };
-document.getElementById('imp').onclick=()=>document.getElementById('file').click();
-document.getElementById('file').onchange=e=>{
+document.getElementById('imp').onclick=()=>document.getElementById('file').click();document.getElementById('file').onchange=e=>{
   const f=e.target.files[0]; if(!f) return;
   const r=new FileReader();
   r.onload=()=>{try{const raw=JSON.parse(r.result);
@@ -1280,10 +1338,31 @@ document.getElementById('file').onchange=e=>{
     DB=d;
     GAME_ORDER.forEach(g=>{ if(!DB[g]) DB[g]=JSON.parse(JSON.stringify(GAMES[g].data)); });
     if(savedAt){ try{localStorage.setItem('mkt_last_export', savedAt);}catch(e){} }
-    save(); drawGameSwitch(); drawTabs(); drawChips(); render(); drawSyncInfo();
+    save(); try{localStorage.removeItem('mkt_dirty_v1');}catch(e){}
+    drawGameSwitch(); drawTabs(); drawChips(); render(); drawSyncInfo();
     toast(when? 'Imported backup from '+when : 'Backup imported');
   }catch(err){toast('Could not read file');}};
   r.readAsText(f); e.target.value='';
+};
+document.getElementById('restore').onclick=()=>{
+  const snaps=getSnapshots();
+  if(!snaps.length){ toast('No auto-backups yet — they build up as you make changes'); return; }
+  // newest first
+  const list=snaps.slice().reverse();
+  const lines=list.map((s,idx)=>`${idx+1}. ${s.label}`).join('\n');
+  const pick=prompt(`Restore an in-app auto-backup?\n\nThese are automatic snapshots kept on THIS device. Enter a number to restore it (1 = most recent):\n\n${lines}`, '1');
+  if(pick===null) return;
+  const n=parseInt(pick,10);
+  if(isNaN(n) || n<1 || n>list.length){ toast('Enter a number from the list'); return; }
+  const chosen=list[n-1];
+  if(!confirm(`Restore your data to the snapshot from ${chosen.label}? This replaces your current in-app data (your backup files are untouched).`)) return;
+  try{
+    DB=JSON.parse(JSON.stringify(chosen.data));
+    GAME_ORDER.forEach(g=>{ if(!DB[g]) DB[g]=JSON.parse(JSON.stringify(GAMES[g].data)); });
+    save();
+    drawGameSwitch(); drawTabs(); drawChips(); render(); drawSyncInfo();
+    toast('Restored snapshot from '+chosen.label);
+  }catch(e){ toast('Could not restore snapshot'); }
 };
 document.getElementById('rst').onclick=()=>{
   if(confirm('Reset everything back to the original data? Your changes across both games will be lost.')){
