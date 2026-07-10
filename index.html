@@ -268,6 +268,14 @@ select{padding:11px 12px;border-radius:11px;border:1px solid var(--line);backgro
     <input id="addCat" type="text" placeholder="Type a movie name" autocomplete="off">
     <div class="hint">Type any movie. New names create a new category.</div>
     <div class="suggest" id="catSuggest"></div></div>
+  <div class="field" id="addExpField"><label>Source (expansion)</label>
+    <select id="addExp">
+      <option value="Dreamlight Valley">Dreamlight Valley</option>
+      <option value="Eternity Isle">Eternity Isle</option>
+      <option value="Storybook Vale">Storybook Vale</option>
+      <option value="Wishblossom Ranch">Wishblossom Ranch</option>
+      <option value="Honeyglow Woods">Honeyglow Woods</option>
+    </select></div>
   <div class="field"><label>Owned?</label>
     <div class="toggle" id="ownToggle">
       <button type="button" class="tg on" data-own="no">Not yet</button>
@@ -283,6 +291,16 @@ select{padding:11px 12px;border-radius:11px;border:1px solid var(--line);backgro
 <div class="sheet" id="dsheet">
   <div class="grip"></div>
   <h3 id="dTitle">Details</h3>
+
+  <!-- Source (expansion) -->
+  <div class="field dgroup" id="g_exp"><label>Source (expansion)</label>
+    <select id="editExp">
+      <option value="Dreamlight Valley">Dreamlight Valley</option>
+      <option value="Eternity Isle">Eternity Isle</option>
+      <option value="Storybook Vale">Storybook Vale</option>
+      <option value="Wishblossom Ranch">Wishblossom Ranch</option>
+      <option value="Honeyglow Woods">Honeyglow Woods</option>
+    </select></div>
 
   <!-- Character: role -->
   <div class="field dgroup" id="g_role"><label>Role</label>
@@ -874,6 +892,10 @@ function openSheet(){
   sg.querySelectorAll('button').forEach(b=>b.onclick=()=>{document.getElementById('addCat').value=b.dataset.cat;});
   document.getElementById('addName').value='';
   document.getElementById('addCat').value='';
+  // Source field only applies to Dreamlight Valley game; hide it for Magic Kingdoms
+  const expField=document.getElementById('addExpField');
+  if(game==='dreamlight'){ expField.style.display=''; document.getElementById('addExp').value='Dreamlight Valley'; }
+  else { expField.style.display='none'; }
   setOwn(false);
   scrim.classList.add('on'); sheet.classList.add('on');
   setTimeout(()=>document.getElementById('addName').focus(),250);
@@ -897,6 +919,7 @@ document.getElementById('save').onclick=()=>{
   if(items().some(x=>x.name===nm && x.category===c)){toast('Already on the list');return;}
   const isNewCat=!items().some(x=>x.category===c);
   const it={name:nm,category:c,owned:own,level:own?'':'',timer:'',unlock:'',status:''};
+  if(game==='dreamlight'){ it.expansion=document.getElementById('addExp').value||'Dreamlight Valley'; }
   recompute(it); items().push(it); save();
   window._cat=''; closeSheet(); saveUI(); render();
   toast(isNewCat ? 'Added '+nm+' · new category "'+c+'"' : 'Added '+nm);
@@ -930,6 +953,15 @@ function openDetail(id){
   showGroup('g_days', isComp);
   showGroup('g_ingr', isRecipe);
   showGroup('g_loc', isOtherCol);
+  // Source applies to all DDV items
+  const isDDV = (game==='dreamlight');
+  showGroup('g_exp', isDDV);
+  if(isDDV){
+    const ee=document.getElementById('editExp');
+    if(!it.expansion) it.expansion='Dreamlight Valley';
+    ee.value=it.expansion;
+    ee.onchange=()=>{ _editItem.expansion=ee.value; save(); };
+  }
 
   // ensure fields exist
   if(isChar && !it.schedule) it.schedule=[];
