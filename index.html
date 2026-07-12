@@ -390,7 +390,8 @@ const GAMES = {
     data:ORIGINAL},
   dreamlight:{label:'Dreamlight Valley', sections:[['characters','Characters'],['recipes','Recipes'],['collectibles','Collectibles']],
     levels:{characters:['Lv1','Lv2','Lv3','Lv4','Lv5','Lv6','Lv7','Lv8','Lv9','Lv10'], recipes:[], collectibles:[]},
-    order:{collectibles:['Companions','Fish','Foraging','Gems','Ingredients','Figurines','Snippets','Timebending']},
+    order:{recipes:['Appetizer','Entree','Dessert'],
+           collectibles:['Companions','Fish','Foraging','Gems','Ingredients','Figurines','Snippets','Timebending']},
     data:DDV_DATA},
 };
 const GAME_ORDER = ['magic_kingdoms','dreamlight'];
@@ -824,8 +825,15 @@ function drawChips(){
       + lvlOpts.map(([k,l])=>`<option value="${esc(k)}" ${lvlChip===k?'selected':''}>${esc(l)}</option>`).join('')
       + `</select>`;
   } else { lvlChip=''; }
-  // build the category pill (from the current tab's categories)
-  const cats=[...new Set(items().map(x=>x.category))].sort();
+  // build the category pill (from the current tab's categories, honoring any custom order)
+  const CO = (GAMES[game].order && GAMES[game].order[view]) || null;
+  const cats=[...new Set(items().map(x=>x.category))].sort((a,b)=>{
+    if(CO){
+      const ia=CO.indexOf(a), ib=CO.indexOf(b);
+      if(ia!==-1 || ib!==-1) return (ia===-1?999:ia)-(ib===-1?999:ib);
+    }
+    return a.localeCompare(b);
+  });
   if(window._cat && !cats.includes(window._cat)){ window._cat=''; }
   const catHtml=`<select class="actpill catpill ${window._cat?'on':''}" id="catpill">`
     + `<option value="">Category ▾</option>`
