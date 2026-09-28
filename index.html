@@ -173,7 +173,10 @@ select{padding:11px 12px;border-radius:11px;border:1px solid var(--line);backgro
 .scrim.on{display:block}
 .sheet{position:fixed;left:0;right:0;bottom:0;background:var(--bg2);border-top:1px solid var(--line);
   border-radius:22px 22px 0 0;padding:22px 20px calc(28px + env(safe-area-inset-bottom));z-index:50;
-  transform:translateY(100%);transition:transform .28s cubic-bezier(.3,1,.4,1);max-width:760px;margin:0 auto}
+  transform:translateY(100%);transition:transform .28s cubic-bezier(.3,1,.4,1);max-width:760px;margin:0 auto;
+  /* never taller than the screen; scroll inside instead of running off the top */
+  max-height:calc(100vh - 56px);max-height:calc(100dvh - env(safe-area-inset-top,0px) - 16px);
+  overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 .sheet.on{transform:translateY(0)}
 .sheet h3{margin:0 0 16px;font-size:18px}
 .grip{width:38px;height:4px;background:var(--line);border-radius:3px;margin:0 auto 16px}
@@ -1115,7 +1118,9 @@ function editCatOptions(){ return [...new Set(items().map(x=>x.category))].sort(
 function renderEditCatSuggest(){
   if(!_editItem) return;
   const inp=document.getElementById('editCat'), sg=document.getElementById('editCatSuggest');
-  const q=(inp.value||'').trim(), ql=q.toLowerCase();
+  const raw=(inp.value||'').trim();
+  // untouched field (still showing the current category) => list every category; filter only once the user types
+  const q=(raw.toLowerCase()===String(_editItem.category).toLowerCase()) ? '' : raw, ql=q.toLowerCase();
   const cats=editCatOptions();
   const shown=ql? cats.filter(c=>c.toLowerCase().includes(ql)) : cats;
   const exact=cats.some(c=>c.toLowerCase()===ql);
@@ -1422,6 +1427,7 @@ dscrim.onclick=closeDetail;
   function atTop(){ return sheet.scrollTop<=0; }
   sheet.addEventListener('touchstart',e=>{
     if(e.touches.length!==1) return;
+    if(e.target && e.target.closest && e.target.closest('.suggest')){ dragging=false; return; }
     startY=e.touches[0].clientY; curY=startY; dragging=atTop();
   },{passive:true});
   sheet.addEventListener('touchmove',e=>{
