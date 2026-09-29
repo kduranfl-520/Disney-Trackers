@@ -783,6 +783,9 @@ function saveUI(){ try{ tabState[tabKey()]={chip,cat:window._cat||'',q,actChip,l
   {game,view,q,chip,actChip,cat:window._cat||'',collapsed,schedLocations,compLocations,extraLocations,tabState,sourceFilter:srcOut}));}catch(e){} }
 function items(){ return DB[game][view]; }
 function colMap(){ collapsed[game]=collapsed[game]||{}; collapsed[game][view]=collapsed[game][view]||{}; return collapsed[game][view]; }
+function itemGroupKey(x){
+  return view==='companions' ? (x.notable ? 'Notable Companions' : ((x.locs&&x.locs[0])||'Other')) : x.category;
+}
 
 function statusOf(it){
   if(!it.owned) return 'Not owned';
@@ -901,7 +904,7 @@ function render(){
   if(!rows.length){ list.innerHTML=`<div class="empty">Nothing matches.<br>Try clearing filters or search.</div>`; return; }
 
   // group by category (companions group by their biome location; Notable Companions group separately)
-  const groupKey = view==='companions' ? (x=>x.notable ? 'Notable Companions' : ((x.locs&&x.locs[0])||'Other')) : (x=>x.category);
+  const groupKey = itemGroupKey;
   const groups={};
   rows.forEach(r=>{const k=groupKey(r); (groups[k]=groups[k]||[]).push(r);});
   let html='';
@@ -1176,7 +1179,7 @@ function drawTabs(){
   });
 }
 document.getElementById('collapseAll').onclick=()=>{
-  const m=colMap(); [...new Set(items().map(x=>x.category))].forEach(c=>m[c]=true); saveUI(); render();
+  const m=colMap(); [...new Set(items().map(itemGroupKey))].forEach(c=>m[c]=true); saveUI(); render();
 };
 document.getElementById('expandAll').onclick=()=>{ collapsed[game][view]={}; saveUI(); render(); };
 
