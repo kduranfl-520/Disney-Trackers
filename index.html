@@ -544,182 +544,182 @@ function freshDB(){
   d._fixes={catfix_v1:true};   // built-in data already has these corrections
   return d;
 }
-function load(){
+function migrateData(d){
   // v3: collectibles were restructured. Migrate from v2 once, preserving prior progress
   // for everything except DDV collectibles (which take the corrected built-in list).
-  try{const s=localStorage.getItem(KEY); if(s){const d=JSON.parse(s);
-    GAME_ORDER.forEach(g=>{ if(!d[g]) d[g]=JSON.parse(JSON.stringify(GAMES[g].data)); });
-    // ensure each section exists; if a section is missing, seed it from built-in
-    GAME_ORDER.forEach(g=>{
-      GAMES[g].sections.forEach(([sec])=>{
-        if(Array.isArray(d[g][sec])) return;
-        if(sec==='companions'){
-          // Don't seed fresh here if this old save still has its companions sitting inside
-          // 'collectibles' (pre-split saves) — the compsplit migration below will move the
-          // user's real owned/leveled data out of there. Only seed fresh for saves that have
-          // neither a companions array nor any Companions-category rows left in collectibles.
-          const stillInCol = Array.isArray(d[g].collectibles) && d[g].collectibles.some(x=>x.category==='Companions');
-          if(stillInCol) return;
-          d[g][sec]=JSON.parse(JSON.stringify((GAMES[g].data.collectibles||[]).filter(x=>x.category==='Companions')))
-            .map(x=>{ delete x.category; return x; });
-        } else {
-          d[g][sec]=JSON.parse(JSON.stringify(GAMES[g].data[sec]||[]));
+  GAME_ORDER.forEach(g=>{ if(!d[g]) d[g]=JSON.parse(JSON.stringify(GAMES[g].data)); });
+  // ensure each section exists; if a section is missing, seed it from built-in
+  GAME_ORDER.forEach(g=>{
+    GAMES[g].sections.forEach(([sec])=>{
+      if(Array.isArray(d[g][sec])) return;
+      if(sec==='companions'){
+        // Don't seed fresh here if this old save still has its companions sitting inside
+        // 'collectibles' (pre-split saves) — the compsplit migration below will move the
+        // user's real owned/leveled data out of there. Only seed fresh for saves that have
+        // neither a companions array nor any Companions-category rows left in collectibles.
+        const stillInCol = Array.isArray(d[g].collectibles) && d[g].collectibles.some(x=>x.category==='Companions');
+        if(stillInCol) return;
+        d[g][sec]=JSON.parse(JSON.stringify((GAMES[g].data.collectibles||[]).filter(x=>x.category==='Companions')))
+          .map(x=>{ delete x.category; return x; });
+      } else {
+        d[g][sec]=JSON.parse(JSON.stringify(GAMES[g].data[sec]||[]));
+      }
+    });
+  });
+  applyDataFixes(d);   // Scrooge/Pluto category fixes (flag stored inside the data)
+  // one-time cleanup: mounts moved from a 'Mounts' category into their movie categories.
+  // Carry over any owned/level progress, then drop the stale 'Mounts' rows.
+  try{ if(Array.isArray(d.dreamlight && d.dreamlight.characters)){
+    const moviemap={Maximus:'Tangled',Khan:'Mulan',Pegasus:'Hercules',Sven:'Frozen','Customizable Horse':'Dreamlight Valley'};
+    const chars=d.dreamlight.characters;
+    chars.filter(c=>c.category==='Mounts').forEach(old=>{
+      const target=moviemap[old.name]; if(!target) return;
+      let dest=chars.find(c=>c.name===old.name && c.category===target);
+      if(dest){ // copy progress forward if the user had any
+        if(old.owned){ dest.owned=old.owned; dest.level=old.level; dest.timer=old.timer; dest.status=old.status; dest.role=old.role||dest.role; dest.schedule=old.schedule||dest.schedule; }
+      } else {
+        old.category=target; // no built-in dest yet; just relabel
+      }
+    });
+    d.dreamlight.characters=chars.filter(c=>c.category!=='Mounts');
+  }}catch(e){}
+  // merge in any NEW built-in items (by name+category) added in later versions,
+  // without disturbing the user's existing progress
+  GAME_ORDER.forEach(g=>{
+    GAMES[g].sections.forEach(([sec])=>{
+      if(sec==='companions' && !Array.isArray(d[g][sec])) return;   // not split yet; compsplit below handles it
+      const builtin = sec==='companions'
+        ? (GAMES[g].data.collectibles||[]).filter(x=>x.category==='Companions')
+        : (GAMES[g].data[sec]||[]);
+      const have = sec==='companions'
+        ? new Set(d[g][sec].map(x=>x.name))
+        : haveKeys(d[g][sec]);
+      builtin.forEach(it=>{
+        const key = sec==='companions' ? it.name : (it.name+'|'+it.category);
+        if(!have.has(key)){
+          const copy=JSON.parse(JSON.stringify(it));
+          if(sec==='companions') delete copy.category;
+          d[g][sec].push(copy);
         }
       });
     });
-    applyDataFixes(d);   // Scrooge/Pluto category fixes (flag stored inside the data)
-    // one-time cleanup: mounts moved from a 'Mounts' category into their movie categories.
-    // Carry over any owned/level progress, then drop the stale 'Mounts' rows.
-    try{ if(Array.isArray(d.dreamlight && d.dreamlight.characters)){
-      const moviemap={Maximus:'Tangled',Khan:'Mulan',Pegasus:'Hercules',Sven:'Frozen','Customizable Horse':'Dreamlight Valley'};
-      const chars=d.dreamlight.characters;
-      chars.filter(c=>c.category==='Mounts').forEach(old=>{
-        const target=moviemap[old.name]; if(!target) return;
-        let dest=chars.find(c=>c.name===old.name && c.category===target);
-        if(dest){ // copy progress forward if the user had any
-          if(old.owned){ dest.owned=old.owned; dest.level=old.level; dest.timer=old.timer; dest.status=old.status; dest.role=old.role||dest.role; dest.schedule=old.schedule||dest.schedule; }
-        } else {
-          old.category=target; // no built-in dest yet; just relabel
+  });
+  // apply built-in character schedules to existing saves
+  try{
+    if(d.dreamlight && Array.isArray(d.dreamlight.characters)){
+      const builtinChars=(GAMES.dreamlight.data.characters||[]);
+      d.dreamlight.characters.forEach(c=>{
+        const bi=builtinChars.find(b=>b.name===c.name && b.category===c.category);
+        if(bi && Array.isArray(bi.schedule) && bi.schedule.length){
+          c.schedule=JSON.parse(JSON.stringify(bi.schedule));
         }
       });
-      d.dreamlight.characters=chars.filter(c=>c.category!=='Mounts');
-    }}catch(e){}
-    // merge in any NEW built-in items (by name+category) added in later versions,
-    // without disturbing the user's existing progress
-    GAME_ORDER.forEach(g=>{
-      GAMES[g].sections.forEach(([sec])=>{
-        if(sec==='companions' && !Array.isArray(d[g][sec])) return;   // not split yet; compsplit below handles it
-        const builtin = sec==='companions'
-          ? (GAMES[g].data.collectibles||[]).filter(x=>x.category==='Companions')
-          : (GAMES[g].data[sec]||[]);
-        const have = sec==='companions'
-          ? new Set(d[g][sec].map(x=>x.name))
-          : haveKeys(d[g][sec]);
-        builtin.forEach(it=>{
-          const key = sec==='companions' ? it.name : (it.name+'|'+it.category);
-          if(!have.has(key)){
-            const copy=JSON.parse(JSON.stringify(it));
-            if(sec==='companions') delete copy.category;
-            d[g][sec].push(copy);
-          }
-        });
+    }
+  }catch(e){}
+  // apply built-in companion locations + time windows to existing saves (pre-split saves only;
+  // once split, compdays/compsplit below handle companions directly)
+  try{
+    if(d.dreamlight && Array.isArray(d.dreamlight.collectibles)){
+      const builtinCol=(GAMES.dreamlight.data.collectibles||[]);
+      d.dreamlight.collectibles.forEach(c=>{
+        if(c.category!=='Companions') return;
+        const bi=builtinCol.find(b=>b.category==='Companions' && b.name===c.name);
+        if(bi){
+          if(Array.isArray(bi.locs)) c.locs=JSON.parse(JSON.stringify(bi.locs));
+          if(Array.isArray(bi.schedule)) c.schedule=JSON.parse(JSON.stringify(bi.schedule));
+        }
+      });
+    }
+  }catch(e){}
+  // apply verified day-of-week schedules (dayTimes) to companions still sitting in collectibles
+  // (pre-split saves); post-split saves get this via the compsplit merge-in-new-builtins step.
+  try{
+    ['dreamlight','dreamlight_arcade'].forEach(g=>{
+      if(!d[g] || !Array.isArray(d[g].collectibles)) return;
+      const builtinCol=(GAMES[g] && GAMES[g].data.collectibles)||[];
+      d[g].collectibles.forEach(c=>{
+        if(c.category!=='Companions') return;
+        const bi=builtinCol.find(b=>b.category==='Companions' && b.name===c.name);
+        if(bi && bi.dayTimes && Object.keys(bi.dayTimes).length){
+          c.dayTimes=JSON.parse(JSON.stringify(bi.dayTimes));
+          if(c.days) delete c.days;
+        }
       });
     });
-    // one-time: apply built-in character schedules to existing saves (schedule data added in this version)
-    try{
-      if(localStorage.getItem('mkt_sched_v1')!=='done' && d.dreamlight && Array.isArray(d.dreamlight.characters)){
-        const builtinChars=(GAMES.dreamlight.data.characters||[]);
-        d.dreamlight.characters.forEach(c=>{
-          const bi=builtinChars.find(b=>b.name===c.name && b.category===c.category);
-          if(bi && Array.isArray(bi.schedule) && bi.schedule.length){
-            c.schedule=JSON.parse(JSON.stringify(bi.schedule));
-          }
-        });
-        localStorage.setItem('mkt_sched_v1','done');
-      }
-    }catch(e){}
-    // one-time: apply built-in companion locations + time windows to existing saves
-    try{
-      if(localStorage.getItem('mkt_compsched_v1')!=='done' && d.dreamlight && Array.isArray(d.dreamlight.collectibles)){
-        const builtinCol=(GAMES.dreamlight.data.collectibles||[]);
-        d.dreamlight.collectibles.forEach(c=>{
-          if(c.category!=='Companions') return;
-          const bi=builtinCol.find(b=>b.category==='Companions' && b.name===c.name);
-          if(bi){
-            if(Array.isArray(bi.locs)) c.locs=JSON.parse(JSON.stringify(bi.locs));
-            if(Array.isArray(bi.schedule)) c.schedule=JSON.parse(JSON.stringify(bi.schedule));
-          }
-        });
-        localStorage.setItem('mkt_compsched_v1','done');
-      }
-    }catch(e){}
-    // one-time: apply verified day-of-week schedules (dayTimes) to companions on both DDV saves
-    try{
-      if(localStorage.getItem('mkt_compdays_v1')!=='done'){
-        ['dreamlight','dreamlight_arcade'].forEach(g=>{
-          if(!d[g] || !Array.isArray(d[g].collectibles)) return;
-          const builtinCol=(GAMES[g] && GAMES[g].data.collectibles)||[];
-          d[g].collectibles.forEach(c=>{
-            if(c.category!=='Companions') return;
-            const bi=builtinCol.find(b=>b.category==='Companions' && b.name===c.name);
-            if(bi && bi.dayTimes && Object.keys(bi.dayTimes).length){
-              c.dayTimes=JSON.parse(JSON.stringify(bi.dayTimes));
-              if(c.days) delete c.days;
+  }catch(e){}
+  // split Companions out of collectibles into their own 'companions' section,
+  // converting compLevel (free text) to the standard level/MAX system so the Level filter works.
+  try{
+    ['dreamlight','dreamlight_arcade'].forEach(g=>{
+      if(!d[g]) return;
+      if(!Array.isArray(d[g].companions)) d[g].companions=[];
+      if(Array.isArray(d[g].collectibles)){
+        const stay=[], moved=[];
+        d[g].collectibles.forEach(c=>{
+          if(c.category==='Companions'){
+            delete c.category;
+            const cl=(c.compLevel||'').replace(/^Lv\s*/i,'').trim();
+            const n=parseInt(cl,10);
+            if(c.owned && cl){
+              if(!isNaN(n) && n>=5) c.level='MAX';
+              else if(!isNaN(n)) c.level=String(n);
             }
-          });
+            delete c.compLevel;
+            c.status=statusOfMigrated(c,'companions',g);
+            moved.push(c);
+          } else stay.push(c);
         });
-        localStorage.setItem('mkt_compdays_v1','done');
+        d[g].collectibles=stay;
+        moved.forEach(c=>{ if(!d[g].companions.some(x=>x.name===c.name)) d[g].companions.push(c); });
       }
-    }catch(e){}
-    // one-time: split Companions out of collectibles into their own 'companions' section,
-    // converting compLevel (free text) to the standard level/MAX system so the Level filter works.
-    try{
-      if(localStorage.getItem('mkt_compsplit_v1')!=='done'){
-        ['dreamlight','dreamlight_arcade'].forEach(g=>{
-          if(!d[g]) return;
-          if(!Array.isArray(d[g].companions)) d[g].companions=[];
-          if(Array.isArray(d[g].collectibles)){
-            const stay=[], moved=[];
-            d[g].collectibles.forEach(c=>{
-              if(c.category==='Companions'){
-                delete c.category;
-                const cl=(c.compLevel||'').replace(/^Lv\s*/i,'').trim();
-                const n=parseInt(cl,10);
-                if(c.owned && cl){
-                  if(!isNaN(n) && n>=5) c.level='MAX';
-                  else if(!isNaN(n)) c.level=String(n);
-                }
-                delete c.compLevel;
-                c.status=statusOfMigrated(c,'companions',g);
-                moved.push(c);
-              } else stay.push(c);
-            });
-            d[g].collectibles=stay;
-            moved.forEach(c=>{ if(!d[g].companions.some(x=>x.name===c.name)) d[g].companions.push(c); });
-          }
-          // bring in any built-in companions this old save never had at all (added in later versions)
-          const builtinComp=(GAMES[g].data.collectibles||[]).filter(x=>x.category==='Companions');
-          const have=new Set(d[g].companions.map(x=>x.name));
-          builtinComp.forEach(it=>{
-            if(!have.has(it.name)){
-              const copy=JSON.parse(JSON.stringify(it)); delete copy.category;
-              d[g].companions.push(copy);
-            }
-          });
+      // bring in any built-in companions this save never had at all (added in later versions)
+      const builtinComp=(GAMES[g].data.collectibles||[]).filter(x=>x.category==='Companions');
+      const have=new Set(d[g].companions.map(x=>x.name));
+      builtinComp.forEach(it=>{
+        if(!have.has(it.name)){
+          const copy=JSON.parse(JSON.stringify(it)); delete copy.category;
+          d[g].companions.push(copy);
+        }
+      });
+    });
+  }catch(e){}
+  // tag existing companions as 'notable' (Pluto, Zero, Lucifer, Magic Carpet, etc.) so the
+  // Notable Companions group appears correctly for saves that had these before the flag existed.
+  try{
+    ['dreamlight','dreamlight_arcade'].forEach(g=>{
+      if(!d[g] || !Array.isArray(d[g].companions)) return;
+      const builtinComp=(GAMES[g].data.collectibles||[]).filter(x=>x.category==='Companions');
+      const notableNames=new Set(builtinComp.filter(x=>x.notable).map(x=>x.name));
+      d[g].companions.forEach(c=>{ if(notableNames.has(c.name)) c.notable=true; });
+    });
+  }catch(e){}
+  // tag recipes/characters/collectibles with their expansion source
+  try{
+    if(d.dreamlight){
+      const tag=(arr,builtin)=>{
+        if(!Array.isArray(arr)||!Array.isArray(builtin)) return;
+        arr.forEach(it=>{
+          if(it.expansion) return;
+          const bi=builtin.find(b=>b.name===it.name && b.category===it.category);
+          if(bi && bi.expansion) it.expansion=bi.expansion;
         });
-        localStorage.setItem('mkt_compsplit_v1','done');
-      }
-    }catch(e){}
-    // one-time: tag existing companions as 'notable' (Pluto, Zero, Lucifer, Magic Carpet, etc.) so the
-    // Notable Companions group appears correctly for saves that had these before the flag existed.
-    try{
-      if(localStorage.getItem('mkt_compnotable_v1')!=='done'){
-        ['dreamlight','dreamlight_arcade'].forEach(g=>{
-          if(!d[g] || !Array.isArray(d[g].companions)) return;
-          const builtinComp=(GAMES[g].data.collectibles||[]).filter(x=>x.category==='Companions');
-          const notableNames=new Set(builtinComp.filter(x=>x.notable).map(x=>x.name));
-          d[g].companions.forEach(c=>{ if(notableNames.has(c.name)) c.notable=true; });
-        });
-        localStorage.setItem('mkt_compnotable_v1','done');
-      }
-    }catch(e){}
-    try{
-      if(localStorage.getItem('mkt_recipexp_v1')!=='done' && d.dreamlight){
-        const tag=(arr,builtin)=>{
-          if(!Array.isArray(arr)||!Array.isArray(builtin)) return;
-          arr.forEach(it=>{
-            if(it.expansion) return;
-            const bi=builtin.find(b=>b.name===it.name && b.category===it.category);
-            if(bi && bi.expansion) it.expansion=bi.expansion;
-          });
-        };
-        tag(d.dreamlight.recipes, GAMES.dreamlight.data.recipes||[]);
-        tag(d.dreamlight.characters, GAMES.dreamlight.data.characters||[]);
-        tag(d.dreamlight.collectibles, GAMES.dreamlight.data.collectibles||[]);
-        localStorage.setItem('mkt_recipexp_v1','done');
-      }
-    }catch(e){}
-    return d;}}catch(e){}
+      };
+      tag(d.dreamlight.recipes, GAMES.dreamlight.data.recipes||[]);
+      tag(d.dreamlight.characters, GAMES.dreamlight.data.characters||[]);
+      tag(d.dreamlight.collectibles, GAMES.dreamlight.data.collectibles||[]);
+    }
+  }catch(e){}
+  return d;
+}
+function load(){
+  try{const s=localStorage.getItem(KEY); if(s){
+    const d=migrateData(JSON.parse(s));
+    // mark every one-time flag as done so this device's own future loads skip straight through;
+    // migrateData itself is now idempotent and safe to re-run (e.g. on import) regardless of these.
+    ['mkt_sched_v1','mkt_compsched_v1','mkt_compdays_v1','mkt_compsplit_v1','mkt_compnotable_v1','mkt_recipexp_v1']
+      .forEach(k=>{ try{localStorage.setItem(k,'done');}catch(e){} });
+    return d;
+  }}catch(e){}
   // first run on v3: try migrating the old v2 save
   try{const old=localStorage.getItem('mkt_data_v2'); if(old){const o=JSON.parse(old);
     const fresh=freshDB();
@@ -1672,9 +1672,7 @@ document.getElementById('imp').onclick=()=>document.getElementById('file').click
         e.target.value=''; return;
       }
     }
-    DB=d;
-    GAME_ORDER.forEach(g=>{ if(!DB[g]) DB[g]=JSON.parse(JSON.stringify(GAMES[g].data)); });
-    applyDataFixes(DB);
+    DB=migrateData(d);
     if(savedAt){ try{localStorage.setItem('mkt_last_export', savedAt);}catch(e){} }
     save(); try{localStorage.removeItem('mkt_dirty_v1');}catch(e){}
     drawGameSwitch(); drawTabs(); drawChips(); render(); drawSyncInfo();
@@ -1695,9 +1693,7 @@ document.getElementById('restore').onclick=()=>{
   const chosen=list[n-1];
   if(!confirm(`Restore your data to the snapshot from ${chosen.label}? This replaces your current in-app data (your backup files are untouched).`)) return;
   try{
-    DB=JSON.parse(JSON.stringify(chosen.data));
-    GAME_ORDER.forEach(g=>{ if(!DB[g]) DB[g]=JSON.parse(JSON.stringify(GAMES[g].data)); });
-    applyDataFixes(DB);
+    DB=migrateData(JSON.parse(JSON.stringify(chosen.data)));
     save();
     drawGameSwitch(); drawTabs(); drawChips(); render(); drawSyncInfo();
     toast('Restored snapshot from '+chosen.label);
