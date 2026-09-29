@@ -1712,6 +1712,17 @@ function mergeBuiltins(){
     if(!DB[g]) DB[g]=JSON.parse(JSON.stringify(GAMES[g].data));
     GAMES[g].sections.forEach(([sec])=>{
       if(!Array.isArray(DB[g][sec])) DB[g][sec]=[];
+      if(sec==='companions'){
+        const builtin=(GAMES[g].data.collectibles||[]).filter(x=>x.category==='Companions');
+        const have=new Set(DB[g][sec].map(x=>x.name));
+        builtin.forEach(it=>{
+          if(!have.has(it.name)){
+            const copy=JSON.parse(JSON.stringify(it)); delete copy.category;
+            DB[g][sec].push(copy); added++;
+          }
+        });
+        return;
+      }
       const have=haveKeys(DB[g][sec]);
       (GAMES[g].data[sec]||[]).forEach(it=>{
         if(!have.has(it.name+'|'+it.category)){ DB[g][sec].push(JSON.parse(JSON.stringify(it))); added++; }
@@ -1720,8 +1731,38 @@ function mergeBuiltins(){
   });
   return added;
 }
+// Reconcile the two DDV tabs (PlayStation / Apple Arcade) so any item present on one
+// — whether built-in or added by hand — also exists (unowned) on the other. Existing
+// progress on either side is left untouched; this only ever adds missing rows.
+function mirrorAcrossDDV(){
+  let added=0;
+  const a='dreamlight', b='dreamlight_arcade';
+  if(!DB[a] || !DB[b]) return 0;
+  GAMES[a].sections.forEach(([sec])=>{
+    if(!Array.isArray(DB[a][sec])) DB[a][sec]=[];
+    if(!Array.isArray(DB[b][sec])) DB[b][sec]=[];
+    const isComp = sec==='companions';
+    const keyOf = isComp ? (x=>x.name) : (x=>x.name+'|'+x.category);
+    [[a,b],[b,a]].forEach(([src,dst])=>{
+      const haveDst=new Set(DB[dst][sec].map(keyOf));
+      DB[src][sec].forEach(it=>{
+        if(haveDst.has(keyOf(it))) return;
+        const copy=JSON.parse(JSON.stringify(it));
+        copy.owned=false; copy.level=''; copy.timer=''; copy.status='';
+        if(copy.fav) delete copy.fav;
+        recomputeFor(dst, copy);
+        DB[dst][sec].push(copy);
+        haveDst.add(keyOf(copy));
+        added++;
+      });
+    });
+  });
+  return added;
+}
 document.getElementById('sync').onclick=()=>{
-  const n=mergeBuiltins();
+  const n1=mergeBuiltins();
+  const n2=mirrorAcrossDDV();
+  const n=n1+n2;
   save(); drawGameSwitch(); drawTabs(); drawChips(); render();
   toast(n? `Synced — added ${n} new item${n>1?'s':''}` : 'Already up to date');
 };
