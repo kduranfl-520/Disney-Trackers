@@ -47,6 +47,14 @@ header{padding:22px 0 12px;position:relative}
   font-weight:700;margin:0 0 4px}
 h1{font-size:25px;margin:0;font-weight:800;letter-spacing:-.01em;line-height:1.05}
 h1 .spark{color:var(--gold)}
+.textsize{position:absolute;top:22px;right:0;display:flex;align-items:center;gap:2px;
+  background:var(--bg2);border:1px solid var(--line);border-radius:9px;padding:2px}
+.textsize button{border:none;background:none;color:var(--mut);font-weight:800;
+  width:26px;height:26px;border-radius:7px;cursor:pointer;font-size:15px;line-height:1}
+.textsize button:active{background:var(--card);color:var(--gold)}
+.textsize button:disabled{opacity:.35;cursor:default}
+.textsize #tsLabel{width:22px;text-align:center;font-weight:800;font-size:13px;color:var(--gold);
+  user-select:none}
 
 /* dashboard */
 .dash{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:7px;margin:12px 0 5px}
@@ -258,6 +266,11 @@ select{padding:11px 12px;border-radius:11px;border:1px solid var(--line);backgro
   <header>
     <p class="kicker" id="kicker">Disney Magic Kingdoms</p>
     <h1>Collection <span class="spark">Tracker</span></h1>
+    <div class="textsize" id="textsize">
+      <button type="button" id="tsDown" aria-label="Decrease text size">−</button>
+      <span id="tsLabel">A</span>
+      <button type="button" id="tsUp" aria-label="Increase text size">+</button>
+    </div>
   </header>
 
   <div class="gameswitch" id="gameswitch"></div>
@@ -448,6 +461,8 @@ const UIKEY='mkt_ui_v3';
 let DB = load();
 let game='magic_kingdoms';
 let view='characters', cat='', q='', chip='all', actChip='', lvlChip='', dayChip='';
+const TEXT_SCALES=[0.9,1,1.15,1.3];
+let textScaleIdx=1;
 const sourceFilter={};  // sourceFilter[game] = Set of active expansion names (persists across Characters/Recipes/Collectibles)
 function activeSources(){ sourceFilter[game]=sourceFilter[game]||new Set(); return sourceFilter[game]; }
 const collapsed={};  // collapsed[game][section] = {cat:true}
@@ -479,6 +494,7 @@ if(_ui){
   if(_ui.sourceFilter && typeof _ui.sourceFilter==='object'){
     Object.keys(_ui.sourceFilter).forEach(g=>{ sourceFilter[g]=new Set(_ui.sourceFilter[g]||[]); });
   }
+  if(Number.isInteger(_ui.textScaleIdx) && TEXT_SCALES[_ui.textScaleIdx]!==undefined) textScaleIdx=_ui.textScaleIdx;
 }
 /* keys used to decide whether a built-in item is already present. Items whose category the user changed
    remember where they started (origCat), so "Sync"/load never re-adds the original as a duplicate. */
@@ -780,7 +796,7 @@ function loadUI(){ try{const s=localStorage.getItem(UIKEY); return s?JSON.parse(
 function saveUI(){ try{ tabState[tabKey()]={chip,cat:window._cat||'',q,actChip,lvlChip,dayChip};
   const srcOut={}; Object.keys(sourceFilter).forEach(g=>{ srcOut[g]=[...sourceFilter[g]]; });
   localStorage.setItem(UIKEY,JSON.stringify(
-  {game,view,q,chip,actChip,cat:window._cat||'',collapsed,schedLocations,compLocations,extraLocations,tabState,sourceFilter:srcOut}));}catch(e){} }
+  {game,view,q,chip,actChip,cat:window._cat||'',collapsed,schedLocations,compLocations,extraLocations,tabState,sourceFilter:srcOut,textScaleIdx}));}catch(e){} }
 function items(){ return DB[game][view]; }
 function colMap(){ collapsed[game]=collapsed[game]||{}; collapsed[game][view]=collapsed[game][view]||{}; return collapsed[game][view]; }
 function itemGroupKey(x){
@@ -1769,7 +1785,20 @@ document.getElementById('sync').onclick=()=>{
 
 // apply restored UI state and draw
 function applyGameTheme(){ try{ document.documentElement.setAttribute('data-game', game); }catch(e){} }
+function applyTextScale(){
+  document.body.style.zoom=TEXT_SCALES[textScaleIdx];
+  const down=document.getElementById('tsDown'), up=document.getElementById('tsUp');
+  if(down) down.disabled = textScaleIdx<=0;
+  if(up) up.disabled = textScaleIdx>=TEXT_SCALES.length-1;
+}
+document.getElementById('tsDown').onclick=()=>{
+  if(textScaleIdx>0){ textScaleIdx--; applyTextScale(); saveUI(); }
+};
+document.getElementById('tsUp').onclick=()=>{
+  if(textScaleIdx<TEXT_SCALES.length-1){ textScaleIdx++; applyTextScale(); saveUI(); }
+};
 applyGameTheme();
+applyTextScale();
 document.getElementById('kicker').textContent='Disney '+GAMES[game].label;
 document.getElementById('q').value = q;
 drawGameSwitch(); drawTabs(); drawChips(); render(); drawSyncInfo();
