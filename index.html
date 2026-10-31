@@ -934,7 +934,7 @@ function render(){
     if(chip==='owned' && !x.owned) return false;
     if(chip==='missing' && x.owned) return false;
     if(chip==='leveling' && st!=='Leveling') return false;
-    if(chip==='gems' && (x.unlock||'')!=='Gems') return false;
+    if(chip==='gems' && !/gem/i.test(x.unlock||'')) return false;
     if(actChip && isDreamlight() && view==='characters' && (x.role||'')!==actChip) return false;
     if(isDreamlight() && activeSources().size && !activeSources().has(x.expansion||'Dreamlight Valley')) return false;
     if(lvlChip && hasLevels()){
