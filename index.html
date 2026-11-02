@@ -1891,15 +1891,10 @@ document.getElementById('kicker').textContent='Disney '+GAMES[game].label;
 document.getElementById('q').value = q;
 drawGameSwitch(); drawTabs(); drawChips(); render(); drawSyncInfo();
 
-/* offline service worker (caches this page) */
-if('serviceWorker' in navigator){
-  const sw=`self.addEventListener('install',e=>self.skipWaiting());
-self.addEventListener('activate',e=>self.clients.claim());
-self.addEventListener('fetch',e=>{e.respondWith(
-  caches.open('mkt').then(c=>c.match(e.request).then(r=>r||fetch(e.request).then(resp=>{
-    if(e.request.method==='GET'){c.put(e.request,resp.clone());} return resp;}).catch(()=>caches.match('/')))) );});`;
-  const url=URL.createObjectURL(new Blob([sw],{type:'text/javascript'}));
-  navigator.serviceWorker.register(url).catch(()=>{});
+/* offline service worker: sw.js sits next to this page. It always checks the network first, so a new
+   version pushed to GitHub shows up on the next launch, and falls back to the saved copy when offline. */
+if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
+  navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).catch(()=>{});
 }
 </script>
 </body>
