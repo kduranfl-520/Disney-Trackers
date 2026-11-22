@@ -265,6 +265,15 @@ body.top-hidden .tabs{margin-bottom:6px}
 /* data menu */
 .tools{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 2px}
 .syncinfo{font-size:11.5px;color:var(--dim);margin:2px 2px 8px;text-align:center}
+.bkov,#bkov{position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:80;display:flex;align-items:flex-end;justify-content:center}
+.bkpanel{width:100%;max-width:560px;max-height:82vh;display:flex;flex-direction:column;background:var(--bg2);border:1px solid var(--line);border-radius:18px 18px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom))}
+.bkhead{display:flex;justify-content:space-between;align-items:center;font-size:16px;margin-bottom:6px}
+.bkhead button{background:none;border:0;color:var(--mut);font-size:20px;padding:4px 8px}
+.bknote{font-size:12.5px;color:var(--mut);line-height:1.4;margin:2px 0 10px}
+.bklist{overflow:auto;display:flex;flex-direction:column;gap:7px}
+.bkrow{display:flex;flex-direction:column;gap:2px;text-align:left;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit;font-size:14px}
+.bkrow span{font-size:12px;color:var(--mut)}
+.bktag{font-size:11px;color:var(--amber);font-weight:600}
 .backupwarn{font-size:12.5px;line-height:1.4;background:rgba(240,169,78,.14);border:1px solid var(--amber);color:var(--amber);border-radius:12px;padding:9px 12px;margin:0 2px 10px;text-align:center}
 .backupwarn b{color:var(--amber)}
 .tool{flex:1 1 30%;padding:10px 6px;border-radius:11px;border:1px solid var(--line);background:var(--bg2);
@@ -316,9 +325,9 @@ body.top-hidden .tabs{margin-bottom:6px}
   <div id="backupWarn" class="backupwarn" style="display:none"></div>
   <div class="tools">
     <button class="tool" id="sync">⟳ Sync new content</button>
-    <button class="tool" id="exp">⤓ Export backup</button>
-    <button class="tool" id="imp">⤒ Import backup</button>
-    <button class="tool" id="restore">↩ Restore auto-backup</button>
+    <button class="tool" id="exp">⤓ Export (to move devices)</button>
+    <button class="tool" id="imp">⤒ Import file</button>
+    <button class="tool" id="restore">↩ Restore / undo</button>
     <button class="tool" id="rst">↺ Reset to original</button>
   </div>
   <div id="syncinfo" class="syncinfo"></div>
@@ -810,15 +819,21 @@ function migrateData(d){
   }catch(e){}
   return d;
 }
+var _loadState, _rawCorrupt;   // how the last load() went: ok | missing | corrupt | v2 (set inside load, which runs earlier)
 function load(){
-  try{const s=localStorage.getItem(KEY); if(s){
-    const d=migrateData(JSON.parse(s));
-    // mark every one-time flag as done so this device's own future loads skip straight through;
-    // migrateData itself is now idempotent and safe to re-run (e.g. on import) regardless of these.
-    ['mkt_sched_v1','mkt_compsched_v1','mkt_compdays_v1','mkt_compsplit_v1','mkt_compnotable_v1','mkt_recipexp_v1']
-      .forEach(k=>{ try{localStorage.setItem(k,'done');}catch(e){} });
-    return d;
-  }}catch(e){}
+  _loadState='missing'; _rawCorrupt=null;
+  let s=null; try{ s=localStorage.getItem(KEY); }catch(e){}
+  if(s){
+    try{
+      const d=migrateData(JSON.parse(s));
+      // mark every one-time flag as done so this device's own future loads skip straight through;
+      // migrateData itself is now idempotent and safe to re-run (e.g. on import) regardless of these.
+      ['mkt_sched_v1','mkt_compsched_v1','mkt_compdays_v1','mkt_compsplit_v1','mkt_compnotable_v1','mkt_recipexp_v1']
+        .forEach(k=>{ try{localStorage.setItem(k,'done');}catch(e){} });
+      _loadState='ok';
+      return d;
+    }catch(e){ _loadState='corrupt'; _rawCorrupt=s; }
+  }
   // first run on v3: try migrating the old v2 save
   try{const old=localStorage.getItem('mkt_data_v2'); if(old){const o=JSON.parse(old);
     const fresh=freshDB();
@@ -829,39 +844,200 @@ function load(){
       if(Array.isArray(o.dreamlight.characters)) fresh.dreamlight.characters=o.dreamlight.characters;
       if(Array.isArray(o.dreamlight.recipes)) fresh.dreamlight.recipes=o.dreamlight.recipes;
     }
-    return fresh;}}catch(e){}
+    if(_loadState==='missing') _loadState='v2'; return fresh;}}catch(e){}
   return freshDB();
 }
-function save(){ try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){} autoSnapshot(); markDirty(); }
+function save(){
+  const at=new Date().toISOString();
+  try{localStorage.setItem(KEY,JSON.stringify(DB)); localStorage.setItem('mkt_saved_at',at);}catch(e){}
+  mirrorCurrent(at); autoSnapshot(); markDirty();
+}
 
-/* ---- Layer 1: rolling in-app auto-backup snapshots ---- */
-const SNAPKEY='mkt_snapshots_v1';   // array of {at, label, data}
+/* ---- Durable copies: a mirror of the live data + history snapshots in IndexedDB ----
+   localStorage stays the primary store. Every save is ALSO mirrored into IndexedDB (a separate, larger
+   database), so if localStorage is ever empty, corrupt, full or out of date the app recovers by itself.
+   Snapshots live in IndexedDB too (compressed), so they can no longer crowd the main save out of the
+   small localStorage quota. */
 const DIRTYKEY='mkt_dirty_v1';      // ISO time of last change since last export
-const MAX_SNAPS=8;                  // keep this many recent snapshots
-let _snapTimer=null;
-function autoSnapshot(){
-  // debounce so a burst of edits writes at most one snapshot per ~2.5s
-  if(_snapTimer) return;
-  _snapTimer=setTimeout(()=>{
-    _snapTimer=null;
+const LEGACY_SNAPKEY='mkt_snapshots_v1';
+const SAFEKEY='mkt_safety_v1';      // last-resort safety copy if IndexedDB is unavailable
+var _idb=null, _idbFail=false, _recovering=(typeof _loadState!=='undefined' && _loadState!=='ok' && _loadState!=='v2');
+var _lastSnapJson=null, _mirrorTimer=null, _mirrorAt=null, _snapTimer=null, _snapDirty=false;
+
+function idbOpen(){
+  if(_idb) return Promise.resolve(_idb);
+  return new Promise((res,rej)=>{
     try{
-      const now=new Date();
-      let arr=[]; try{arr=JSON.parse(localStorage.getItem(SNAPKEY))||[];}catch(e){arr=[];}
-      // skip if identical to the newest snapshot (no real change)
-      const snapshot=JSON.stringify(DB);
-      if(arr.length && arr[arr.length-1]._h===snapshot.length && JSON.stringify(arr[arr.length-1].data)===snapshot){ return; }
-      arr.push({at:now.toISOString(), label:stamp(now), _h:snapshot.length, data:JSON.parse(snapshot)});
-      while(arr.length>MAX_SNAPS) arr.shift();
-      localStorage.setItem(SNAPKEY, JSON.stringify(arr));
-    }catch(e){/* storage full or unavailable — fail quietly */}
-  }, 2500);
+      if(!window.indexedDB){ rej(new Error('no idb')); return; }
+      const r=indexedDB.open('mkt_backup_v1',1);
+      r.onupgradeneeded=()=>{ const d=r.result; d.createObjectStore('kv'); d.createObjectStore('snaps',{keyPath:'id'}); };
+      r.onsuccess=()=>{ _idb=r.result; _idb.onclose=()=>{_idb=null;}; res(_idb); };
+      r.onerror=()=>rej(r.error||new Error('idb error'));
+      r.onblocked=()=>rej(new Error('idb blocked'));
+    }catch(e){ rej(e); }
+  });
+}
+function idbTx(store,mode,fn){
+  return idbOpen().then(db=>new Promise((res,rej)=>{
+    const tx=db.transaction(store,mode); const st=tx.objectStore(store); let out;
+    try{ out=fn(st); }catch(e){ rej(e); return; }
+    tx.oncomplete=()=>res(out && 'result' in out ? out.result : undefined);
+    tx.onerror=()=>rej(tx.error); tx.onabort=()=>rej(tx.error||new Error('aborted'));
+  }));
+}
+const idbPut=(s,v,k)=>idbTx(s,'readwrite',st=>k===undefined?st.put(v):st.put(v,k));
+const idbGet=(s,k)=>idbTx(s,'readonly',st=>st.get(k));
+const idbAll=(s)=>idbTx(s,'readonly',st=>st.getAll());
+const idbDel=(s,k)=>idbTx(s,'readwrite',st=>st.delete(k));
+
+/* compress snapshots when the browser can (iOS 16.4+); otherwise store as text */
+async function packJson(json){
+  try{
+    if(typeof CompressionStream!=='undefined'){
+      const buf=await new Response(new Blob([json]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
+      return {z:1, buf};
+    }
+  }catch(e){}
+  return {z:0, text:json};
+}
+async function unpackJson(rec){
+  if(rec.z){ return await new Response(new Blob([rec.buf]).stream().pipeThrough(new DecompressionStream('gzip'))).text(); }
+  return rec.text;
+}
+function summarize(d){
+  const out={};
+  try{ GAME_ORDER.forEach(g=>{
+    let n=0; const o=d&&d[g]; if(!o) return;
+    Object.keys(o).forEach(k=>{ if(Array.isArray(o[k])) o[k].forEach(x=>{ if(x && x.owned===true) n++; }); });
+    out[g]=n;
+  }); }catch(e){}
+  return out;
+}
+
+/* mirror the live data (coalesced; flushed immediately when the app is hidden) */
+function mirrorCurrent(at){
+  _mirrorAt=at;
+  if(_mirrorTimer) return;
+  _mirrorTimer=setTimeout(flushMirror,400);
+}
+function flushMirror(){
+  if(_mirrorTimer){ clearTimeout(_mirrorTimer); _mirrorTimer=null; }
+  if(_recovering || _idbFail || !_mirrorAt) return;
+  const rec={at:_mirrorAt, json:JSON.stringify(DB)}; _mirrorAt=null;
+  idbPut('kv',rec,'current').catch(()=>{ _idbFail=true; });
+}
+
+/* history snapshots */
+const KEEP_RECENT=10, KEEP_HOURLY_H=24, KEEP_DAILY_D=30, KEEP_PROTECTED=20;
+function autoSnapshot(){
+  _snapDirty=true;
+  if(_snapTimer) return;
+  _snapTimer=setTimeout(()=>{ _snapTimer=null; takeSnapshot('auto'); }, 2500);
+}
+async function takeSnapshot(kind,reason){
+  if(_recovering) return false;
+  try{
+    const json=JSON.stringify(DB);
+    if(kind==='auto' && json===_lastSnapJson){ _snapDirty=false; return true; }
+    const now=new Date();
+    const rec=await packJson(json);
+    Object.assign(rec,{ id:now.toISOString()+'_'+Math.random().toString(36).slice(2,6), at:now.toISOString(),
+      label:stamp(now), kind, reason:reason||'', sum:summarize(DB) });
+    await idbPut('snaps',rec);
+    _lastSnapJson=json; _snapDirty=false;
+    if(kind!=='auto'){ try{localStorage.removeItem(SAFEKEY);}catch(e){} }
+    pruneSnapshots().catch(()=>{});
+    return true;
+  }catch(e){
+    _idbFail=true;
+    if(kind!=='auto'){ // last resort: keep one safety copy in localStorage
+      try{ localStorage.setItem(SAFEKEY, JSON.stringify({at:new Date().toISOString(),label:stamp(new Date()),reason:reason||'',json:JSON.stringify(DB)})); return true; }catch(e2){}
+    }
+    return false;
+  }
+}
+async function pruneSnapshots(){
+  const all=await idbAll('snaps');
+  const auto=all.filter(s=>s.kind==='auto').sort((a,b)=>a.at<b.at?1:-1);   // newest first
+  const prot=all.filter(s=>s.kind!=='auto').sort((a,b)=>a.at<b.at?1:-1);
+  const keep=new Set(); const now=Date.now();
+  auto.slice(0,KEEP_RECENT).forEach(s=>keep.add(s.id));
+  const hours=new Set(), days=new Set();
+  auto.forEach(s=>{
+    const t=new Date(s.at).getTime(), age=now-t;
+    if(age<=KEEP_HOURLY_H*3600e3){ const k=s.at.slice(0,13); if(!hours.has(k)){hours.add(k);keep.add(s.id);} }
+    if(age<=KEEP_DAILY_D*864e5){ const k=s.at.slice(0,10); if(!days.has(k)){days.add(k);keep.add(s.id);} }
+  });
+  prot.slice(0,KEEP_PROTECTED).forEach(s=>keep.add(s.id));
+  for(const s of all){ if(!keep.has(s.id)) await idbDel('snaps',s.id); }
+}
+async function listSnapshots(){
+  let arr=[]; try{ arr=await idbAll('snaps'); }catch(e){}
+  try{ const s=JSON.parse(localStorage.getItem(SAFEKEY)||'null'); if(s) arr.push({id:'ls_safe',at:s.at,label:s.label,kind:'safety',reason:s.reason,z:0,text:s.json,sum:{}}); }catch(e){}
+  return arr.sort((a,b)=>a.at<b.at?1:-1);
+}
+
+/* one-time: move the old localStorage snapshots into IndexedDB (protected), then free that space */
+async function migrateLegacySnaps(){
+  let raw=null; try{ raw=localStorage.getItem(LEGACY_SNAPKEY); }catch(e){}
+  if(!raw) return;
+  let arr=[]; try{ arr=JSON.parse(raw)||[]; }catch(e){ return; }
+  for(const s of arr){
+    if(!s||!s.data) continue;
+    const rec=await packJson(JSON.stringify(s.data));
+    Object.assign(rec,{ id:(s.at||new Date().toISOString())+'_legacy', at:s.at||new Date().toISOString(),
+      label:s.label||stamp(new Date(s.at||Date.now())), kind:'legacy', reason:'Earlier auto-backup', sum:summarize(s.data) });
+    await idbPut('snaps',rec);
+  }
+  try{ localStorage.removeItem(LEGACY_SNAPKEY); }catch(e){}
+}
+
+/* startup: open the mirror, bring back data if the main copy is missing/corrupt/older, then start the safety nets */
+async function initBackup(){
+  try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(()=>{}); }catch(e){}
+  try{
+    await idbOpen();
+    await migrateLegacySnaps();
+    if(typeof _rawCorrupt!=='undefined' && _rawCorrupt){
+      const rec=await packJson(_rawCorrupt);
+      Object.assign(rec,{id:new Date().toISOString()+'_corrupt',at:new Date().toISOString(),label:stamp(new Date()),kind:'corrupt',reason:'Unreadable saved data',sum:{}});
+      await idbPut('snaps',rec);
+    }
+    const cur=await idbGet('kv','current');
+    let lsAt=null; try{ lsAt=localStorage.getItem('mkt_saved_at'); }catch(e){}
+    let recovered=false;
+    if(cur && cur.json){
+      const missing=(_loadState==='missing'||_loadState==='corrupt');
+      const newer=!!(lsAt && cur.at>lsAt);
+      if(missing||newer){
+        try{
+          const d=migrateData(JSON.parse(cur.json));
+          if(d && d.magic_kingdoms && d.dreamlight){
+            DB=d; recovered=true;
+            try{localStorage.setItem(KEY,JSON.stringify(DB)); localStorage.setItem('mkt_saved_at',cur.at);}catch(e){}
+          }
+        }catch(e){}
+      }
+    }
+    _recovering=false;
+    if(recovered){
+      drawGameSwitch(); drawTabs(); drawChips(); render(); drawSyncInfo();
+      toast('Recovered your saved data');
+    }
+    // make sure the mirror has the current data (first run after this update, or after a recovery)
+    mirrorCurrent(new Date().toISOString()); flushMirror();
+    try{ const all=await idbAll('snaps'); const newest=all.filter(s=>s.kind==='auto').sort((a,b)=>a.at<b.at?1:-1)[0];
+      _lastSnapJson=newest?await unpackJson(newest):null; }catch(e){}
+    takeSnapshot('auto');
+  }catch(e){ _idbFail=true; _recovering=false; }
+  // periodic snapshot while the app is open, and flush everything when it goes to the background
+  setInterval(()=>{ if(_snapDirty) takeSnapshot('auto'); },5*60*1000);
+  const flush=()=>{ flushMirror(); if(_snapDirty) takeSnapshot('auto'); };
+  document.addEventListener('visibilitychange',()=>{ if(document.hidden) flush(); });
+  window.addEventListener('pagehide',flush);
 }
 function markDirty(){
-  try{
-    const exp=localStorage.getItem('mkt_last_export');
-    // dirty = there have been changes; record the time of the latest change
-    localStorage.setItem(DIRTYKEY, new Date().toISOString());
-  }catch(e){}
+  try{ localStorage.setItem(DIRTYKEY, new Date().toISOString()); }catch(e){}
 }
 function hasUnsavedChanges(){
   try{
@@ -871,9 +1047,6 @@ function hasUnsavedChanges(){
     if(!exp) return true;                       // never exported but has changes
     return new Date(dirty) > new Date(exp);      // changed since last export
   }catch(e){ return false; }
-}
-function getSnapshots(){
-  try{ return JSON.parse(localStorage.getItem(SNAPKEY))||[]; }catch(e){ return []; }
 }
 function loadUI(){ try{const s=localStorage.getItem(UIKEY); return s?JSON.parse(s):null;}catch(e){return null;} }
 function saveUI(){ try{ tabState[tabKey()]={chip,cat:window._cat||'',q,actChip,lvlChip,dayChip};
@@ -1796,18 +1969,9 @@ function drawSyncInfo(){
   const el=document.getElementById('syncinfo');
   if(el){
     let iso=null; try{iso=localStorage.getItem('mkt_last_export');}catch(e){}
-    el.textContent = iso ? 'Last backup / import: '+stamp(new Date(iso)) : 'No backup yet — tap Export to save one.';
+    el.textContent = 'Your progress saves automatically on this device. ' + (iso ? 'Last transfer file: '+stamp(new Date(iso)) : 'Use Export only to move to another device.');
   }
-  // Layer 2: unsaved-changes reminder before an update can wipe storage
-  const w=document.getElementById('backupWarn');
-  if(w){
-    if(hasUnsavedChanges()){
-      w.style.display='';
-      w.innerHTML='⚠️ <b>You have changes since your last backup.</b> Export now before updating the app or re-adding the icon — an update clears in-app storage.';
-    } else {
-      w.style.display='none';
-    }
-  }
+  const w=document.getElementById('backupWarn'); if(w) w.style.display='none';
 }
 function stamp(d){ // human-readable local time
   d=d||new Date();
@@ -1817,21 +1981,30 @@ function stamp(d){ // human-readable local time
 function fileStamp(d){ d=d||new Date();
   return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(d.getMinutes())}`;
 }
-document.getElementById('exp').onclick=()=>{
+document.getElementById('exp').onclick=async()=>{
   const now=new Date();
   const payload={ app:'disney-trackers', savedAt:now.toISOString(), savedAtLabel:stamp(now), data:DB };
-  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
-  a.download=`disney-trackers-backup_${fileStamp(now)}.json`;a.click();
+  const text=JSON.stringify(payload,null,2);
+  const name=`disney-trackers-backup_${fileStamp(now)}.json`;
+  let shared=false;
+  try{
+    const file=new File([text],name,{type:'application/json'});
+    if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:'Disney Trackers backup'}); shared=true; }
+  }catch(e){ if(e && e.name==='AbortError') return; }   // user closed the share sheet
+  if(!shared){
+    const blob=new Blob([text],{type:'application/json'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();
+  }
   try{localStorage.setItem('mkt_last_export', now.toISOString());}catch(e){}
-  try{localStorage.removeItem('mkt_dirty_v1');}catch(e){}
+  try{localStorage.removeItem(DIRTYKEY);}catch(e){}
   drawSyncInfo();
-  toast('Backup saved · '+stamp(now));
+  toast('Backup file ready · '+stamp(now));
 };
-document.getElementById('imp').onclick=()=>document.getElementById('file').click();document.getElementById('file').onchange=e=>{
+document.getElementById('imp').onclick=()=>document.getElementById('file').click();
+document.getElementById('file').onchange=e=>{
   const f=e.target.files[0]; if(!f) return;
   const r=new FileReader();
-  r.onload=()=>{try{const raw=JSON.parse(r.result);
+  r.onload=async()=>{try{const raw=JSON.parse(r.result);
     // unwrap timestamped envelope, or accept a raw DB (older backups)
     let d, savedAt=null, label=null;
     if(raw && raw.app==='disney-trackers' && raw.data){ d=raw.data; savedAt=raw.savedAt; label=raw.savedAtLabel; }
@@ -1840,46 +2013,62 @@ document.getElementById('imp').onclick=()=>document.getElementById('file').click
     if(d && d.magic_kingdoms && d.dreamlight){ ok=true; }
     else if(d && d.characters && d.attractions){ d={...freshDB(), magic_kingdoms:d}; ok=true; } // old single-game backup
     if(!ok){ toast('Not a valid backup'); e.target.value=''; return; }
-    // warn if this backup is older than what's on the device
-    const prev=localStorage.getItem('mkt_last_export');
     const when = label || (savedAt? stamp(new Date(savedAt)) : null);
-    if(savedAt && prev && new Date(savedAt) < new Date(prev)){
-      if(!confirm(`This backup is from ${when}, which looks OLDER than your most recent save (${stamp(new Date(prev))}). Import anyway and overwrite?`)){
-        e.target.value=''; return;
-      }
-    }
+    if(!confirm(`Replace the data on this device with the backup${when?' from '+when:''}? A safety copy of what's here now is kept first, so you can undo this from Restore.`)){ return; }
+    await takeSnapshot('safety','Before import');
     DB=migrateData(d);
     if(savedAt){ try{localStorage.setItem('mkt_last_export', savedAt);}catch(e){} }
-    save(); try{localStorage.removeItem('mkt_dirty_v1');}catch(e){}
+    save(); try{localStorage.removeItem(DIRTYKEY);}catch(e){}
     drawGameSwitch(); drawTabs(); drawChips(); render(); drawSyncInfo();
     toast(when? 'Imported backup from '+when : 'Backup imported');
   }catch(err){toast('Could not read file');}};
   r.readAsText(f); e.target.value='';
 };
-document.getElementById('restore').onclick=()=>{
-  const snaps=getSnapshots();
-  if(!snaps.length){ toast('No auto-backups yet — they build up as you make changes'); return; }
-  // newest first
-  const list=snaps.slice().reverse();
-  const lines=list.map((s,idx)=>`${idx+1}. ${s.label}`).join('\n');
-  const pick=prompt(`Restore an in-app auto-backup?\n\nThese are automatic snapshots kept on THIS device. Enter a number to restore it (1 = most recent):\n\n${lines}`, '1');
-  if(pick===null) return;
-  const n=parseInt(pick,10);
-  if(isNaN(n) || n<1 || n>list.length){ toast('Enter a number from the list'); return; }
-  const chosen=list[n-1];
-  if(!confirm(`Restore your data to the snapshot from ${chosen.label}? This replaces your current in-app data (your backup files are untouched).`)) return;
-  try{
-    DB=migrateData(JSON.parse(JSON.stringify(chosen.data)));
-    save();
-    drawGameSwitch(); drawTabs(); drawChips(); render(); drawSyncInfo();
-    toast('Restored snapshot from '+chosen.label);
-  }catch(e){ toast('Could not restore snapshot'); }
-};
-document.getElementById('rst').onclick=()=>{
-  if(confirm('Reset everything back to the original data? Your changes across both games will be lost.')){
-    DB=freshDB(); save(); window._cat='';q='';chip='all';
-    Object.keys(collapsed).forEach(k=>delete collapsed[k]); saveUI();
-    document.getElementById('q').value='';drawGameSwitch();drawTabs();drawChips();render();toast('Reset to original');}
+
+/* Restore sheet: every automatic snapshot, newest first, with how much progress each one holds */
+function sumLine(s){
+  const names={magic_kingdoms:'MK',dreamlight:'PS',dreamlight_arcade:'Arcade'};
+  const sm=s.sum||{}; const parts=Object.keys(names).filter(g=>sm[g]!==undefined).map(g=>names[g]+' '+sm[g]);
+  return parts.length? parts.join(' · ')+' owned' : '';
+}
+function closeRestore(){ const o=document.getElementById('bkov'); if(o) o.remove(); }
+async function openRestore(){
+  closeRestore();
+  const snaps=await listSnapshots();
+  const ov=document.createElement('div'); ov.id='bkov';
+  const rows=snaps.map((s,i)=>{
+    const tag = s.kind==='auto' ? '' : ' <span class="bktag">'+({safety:'Safety copy',legacy:'Earlier auto-backup',corrupt:'Unreadable data'}[s.kind]||s.kind)+(s.reason&&s.kind==='safety'?' · '+s.reason:'')+'</span>';
+    return `<button class="bkrow" data-i="${i}"><b>${s.label}</b>${tag}<span>${sumLine(s)}</span></button>`;
+  }).join('');
+  ov.innerHTML=`<div class="bkpanel"><div class="bkhead"><b>Restore from automatic history</b><button id="bkx" type="button">✕</button></div>
+    <div class="bknote">Your app already saves every change on its own. These are older versions, kept so you can go back. Pick one to bring it back — your current data is saved as a safety copy first.</div>
+    <div class="bklist">${rows||'<div class="bknote">No history yet — it builds up as you make changes.</div>'}</div></div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('#bkx').onclick=closeRestore;
+  ov.addEventListener('click',e=>{ if(e.target===ov) closeRestore(); });
+  ov.querySelectorAll('.bkrow').forEach(b=>b.onclick=async()=>{
+    const s=snaps[+b.dataset.i];
+    if(!confirm(`Restore your data to ${s.label}? A safety copy of what's here now is kept first.`)) return;
+    try{
+      const d=JSON.parse(await unpackJson(s));
+      await takeSnapshot('safety','Before restore');
+      DB=migrateData(d); save();
+      closeRestore(); drawGameSwitch(); drawTabs(); drawChips(); render(); drawSyncInfo();
+      toast('Restored '+s.label);
+    }catch(err){ toast('Could not restore that one'); }
+  });
+}
+document.getElementById('restore').onclick=()=>{ openRestore(); };
+document.getElementById('rst').onclick=async()=>{
+  const t=prompt('This wipes ALL progress in every game back to the original data.\n\nA safety copy is saved first and can be brought back from Restore.\n\nType RESET to continue:');
+  if(t===null) return;
+  if(t.trim().toUpperCase()!=='RESET'){ toast('Reset cancelled'); return; }
+  const ok=await takeSnapshot('safety','Before reset');
+  if(!ok && !confirm('Could not save a safety copy first. Reset anyway?')) return;
+  DB=freshDB(); save(); window._cat='';q='';chip='all';
+  Object.keys(collapsed).forEach(k=>delete collapsed[k]); saveUI();
+  document.getElementById('q').value='';drawGameSwitch();drawTabs();drawChips();render();
+  toast('Reset to original — undo from Restore');
 };
 // Force-merge any new built-in items into current data without touching progress
 function mergeBuiltins(){
@@ -1982,6 +2171,7 @@ applyTextScale();
 document.getElementById('kicker').textContent='Disney '+GAMES[game].label;
 document.getElementById('q').value = q;
 drawGameSwitch(); drawTabs(); drawChips(); render(); drawSyncInfo();
+initBackup();
 
 /* offline service worker: sw.js sits next to this page. It always checks the network first, so a new
    version pushed to GitHub shows up on the next launch, and falls back to the saved copy when offline. */
