@@ -143,6 +143,9 @@ body.top-hidden .tabs{margin-bottom:6px}
 .row{display:flex;align-items:center;gap:11px;background:var(--card);border:1px solid var(--line);
   border-radius:11px;padding:7px 11px;margin-bottom:5px}
 .row.off{opacity:.62}
+.row.avail,.row.off.avail{opacity:1;border-color:var(--teal);
+  background:linear-gradient(160deg,rgba(90,208,192,.20),var(--card));box-shadow:inset 4px 0 0 var(--teal)}
+.row.avail .sub{color:var(--teal);font-weight:600}
 .row.leveling{background:linear-gradient(160deg,rgba(90,208,192,.14),var(--card));
   border-color:rgba(90,208,192,.45);box-shadow:inset 3px 0 0 var(--teal)}
 .row.maxed{background:linear-gradient(160deg,var(--card2),#2a3a5e);
@@ -920,6 +923,30 @@ function curNum(it){                                         // numeric level, M
 }
 
 /* ---------- render ---------- */
+/* ---------- companion availability (day + hour, device local time) ---------- */
+const DAY_CODES=['SU','MO','TU','WE','TH','FR','SA'];
+function fmtHour(h){ h=((h%24)+24)%24; const ap=h<12?'AM':'PM'; let hr=h%12; if(hr===0) hr=12; return hr+' '+ap; }
+function windowEnd(e,h){            // hour the window ends today if `h` is inside it (24 = midnight), else 0
+  if(!e) return 0;
+  if(e.all) return 24;
+  const f=parseInt(e.from,10), t0=parseInt(e.to,10);
+  if(isNaN(f)||isNaN(t0)) return 0;
+  const t=(t0===0)?24:t0;
+  if(t>f) return (h>=f && h<t)? t : 0;
+  return h>=f ? 24 : 0;             // overnight window: today covers from..midnight
+}
+function availNow(it,now){          // '' when not available, else a short label like "Until 12 PM"
+  if(!it || !it.dayTimes) return '';
+  now=now||new Date(); const h=now.getHours(), di=now.getDay();
+  const today=it.dayTimes[DAY_CODES[di]];
+  const end=windowEnd(today,h);
+  if(end){ return today.all ? 'All day' : (end>=24 ? 'Until midnight' : 'Until '+fmtHour(end)); }
+  const y=it.dayTimes[DAY_CODES[(di+6)%7]];     // overnight window that started yesterday
+  if(y && !y.all){ const f=parseInt(y.from,10), t0=parseInt(y.to,10);
+    if(!isNaN(f)&&!isNaN(t0)&&t0>0&&t0<=f&&h<t0) return 'Until '+fmtHour(t0); }
+  return '';
+}
+function isAvailableNow(it){ return !it.owned && !!availNow(it); }   // only companions you still need
 function updateTopToggle(){
   document.body.classList.toggle('top-hidden', topHidden);
   const b=document.getElementById('topToggle'); if(!b) return;
@@ -966,6 +993,7 @@ function render(){
     if(chip==='missing' && x.owned) return false;
     if(chip==='leveling' && st!=='Leveling') return false;
     if(chip==='gems' && !/gem/i.test(x.unlock||'')) return false;
+    if(chip==='now' && !(view==='companions' && isAvailableNow(x))) return false;
     if(actChip && isDreamlight() && view==='characters' && (x.role||'')!==actChip) return false;
     if(isDreamlight() && activeSources().size && !activeSources().has(x.expansion||'Dreamlight Valley')) return false;
     if(lvlChip && hasLevels()){
@@ -1003,7 +1031,7 @@ function render(){
       <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
       <span class="gtitle">${esc(g)}</span><span class="gcount">${o}/${gi.length}</span></div>`;
     if(isCol) return;
-    gi.sort((a,b)=>a.name.localeCompare(b.name)).forEach(it=>{
+    gi.sort((a,b)=>((view==='companions'?(isAvailableNow(b)-isAvailableNow(a)):0) || a.name.localeCompare(b.name))).forEach(it=>{
       const st=statusOf(it);
       const lv=hasLevels();
       const ddv = isDreamlight();
@@ -1047,6 +1075,8 @@ function render(){
             : it.level? `Level ${it.level}${it.timer&&it.timer!=='—'?' · '+it.timer:''}`
             : 'Owned';
       }
+      const availLbl = (isComp && !it.owned) ? availNow(it) : '';
+      if(availLbl) sub = '🟢 '+availLbl+' · '+sub.replace(/^Unlock: /,'');
       // prepend expansion source on DDV character & collectible tabs (recipes already include it)
       if(ddv && !isRecipe && !isComp && it.expansion){
         const abbr={'Dreamlight Valley':'Valley','Eternity Isle':'Eternity Isle','Storybook Vale':'Storybook Vale','Wishblossom Ranch':'Wishblossom','Honeyglow Woods':'Honeyglow','Keepsake Sea':'Keepsake'};
@@ -1074,7 +1104,7 @@ function render(){
       const rowCls = it.level==='MAX'?'maxed':(it.owned?(lv?'leveling':'maxed'):'');
       const editable = ddv || (game==='magic_kingdoms');  // DDV cards, and all MK cards (unlock method / no-levels flag)
       const infoTap = editable ? `data-edit="${esc(id)}"` : '';
-      html+=`<div class="row ${it.owned?'':'off'} ${rowCls} ${it.fav?'fav':''}">
+      html+=`<div class="row ${it.owned?'':'off'} ${rowCls} ${it.fav?'fav':''} ${availLbl?'avail':''}">
         <div class="check ${it.owned?'on':''}" data-id="${esc(id)}">
           <svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>
         <div class="info" ${infoTap}><div class="nm">${esc(it.name)}${editable?' <span class="editdot">✎</span>':''}</div><div class="sub">${esc(sub)}</div></div>
@@ -1186,10 +1216,12 @@ function drawChips(){
     + `</select>`;
   // validity: ensure chip is a real option
   const showGems = (game==='magic_kingdoms' && view==='characters');
-  const validChips=['all','fav','owned','missing'].concat(showGems?['gems']:[]);
+  const showNow = (isDreamlight() && view==='companions');
+  const validChips=['all','fav','owned','missing'].concat(showGems?['gems']:[]).concat(showNow?['now']:[]);
   if(!validChips.includes(chip)) chip='all';
   // order: All, Favorites, Owned, [Level pill], [Category pill], Missing, [Gems]
   let html = chip_html('all','All') + chip_html('fav','★ Favorites') + chip_html('owned','Owned');
+  if(showNow) html += chip_html('now','🟢 Now ('+items().filter(isAvailableNow).length+')');
   html += lvlHtml;
   html += dayHtml;
   html += catHtml;
@@ -1904,6 +1936,18 @@ document.getElementById('tsUp').onclick=()=>{
   textScale=Math.round((textScale+TEXT_SCALE_STEP)*100)/100;
   applyTextScale(); saveUI();
 };
+let _availKey='';
+function availStamp(){ const n=new Date(); return n.getDay()+':'+n.getHours(); }
+function refreshAvail(force){
+  const k=availStamp(); if(!force && k===_availKey) return; _availKey=k;
+  if(!(isDreamlight() && view==='companions')) return;
+  const open=(typeof sheet!=='undefined' && sheet.classList.contains('on')) || (typeof dsheet!=='undefined' && dsheet.classList.contains('on'));
+  if(open) { _availKey=''; return; }                 // don't redraw under an open card; retry on next tick
+  drawChips(); render();
+}
+setInterval(()=>refreshAvail(false),30000);
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) refreshAvail(false); });
+window.addEventListener('focus',()=>refreshAvail(false));
 applyGameTheme();
 applyTextScale();
 document.getElementById('kicker').textContent='Disney '+GAMES[game].label;
